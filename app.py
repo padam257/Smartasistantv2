@@ -6,7 +6,8 @@ from azure.search.documents import SearchClient
 from langchain.chat_models import AzureChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
-from langchain.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
+from langchain_community.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
+#from langchain.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
 
 # 🌐 Load environment variables
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
