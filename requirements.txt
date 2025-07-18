@@ -1,5 +1,6 @@
 streamlit
 langchain
+langchain_community
 azure-core
 azure-identity
 PyPDF2
