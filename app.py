@@ -81,7 +81,7 @@ else:
         st.markdown(f"- {doc}")
 
 # 🔍 Query Section
-st.header("🔍 Query SOPs")
+st.header("🔍 Query SOPs documents")
 query_scope = st.selectbox("Run query on:", ["All Documents"] + doc_names, index=0)
 user_query = st.text_input("Your question:")
 
