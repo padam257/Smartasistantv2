@@ -1,10 +1,10 @@
-streamlit
-langchain
-langchain_community
 azure-core
 azure-identity
 PyPDF2
-openai>=1.0
 azure-search-documents>=11.4.0
-azure-storage-blob>=12.14.1
 python-dotenv
+langchain>=0.1.14
+langchain-community>=0.0.10
+azure-storage-blob>=12.19.1
+openai>=1.30.1
+streamlit>=1.35.0
