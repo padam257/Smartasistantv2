@@ -1,5 +1,6 @@
 azure-core
 azure-identity
+azure-ai-search
 PyPDF2
 azure-search-documents>=11.4.0
 python-dotenv
