@@ -60,7 +60,7 @@ qa_chain = RetrievalQA.from_chain_type(
 )
 
 # 🌟 UI
-st.title("🤖 SmartAssistant v2: SOP GenAI")
+st.title("🤖 SmartAssistantv2: SOP GenAI")
 st.markdown("Query your SOPs using GenAI. Upload PDFs, view existing, and query all or specific.")
 
 st.header("📄 Upload New SOP PDF")
