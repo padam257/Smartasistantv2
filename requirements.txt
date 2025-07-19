@@ -3,7 +3,7 @@ azure-identity
 PyPDF2
 azure-search-documents>=11.4.0
 python-dotenv
-langchain>=0.1.14
+langchain==0.1.16
 langchain-community
 azure-storage-blob>=12.19.1
 openai>=1.30.1
