@@ -9,7 +9,7 @@ from langchain.chains import RetrievalQA
 #from langchain_community.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
 from langchain.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
 
-# 🌐 Load environment variables
+# 🌐 Load environment variable
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
