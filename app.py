@@ -6,8 +6,10 @@ from azure.search.documents import SearchClient
 from langchain.chat_models import AzureChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
+from langchain.vectorstores.azuresearch import AzureSearch
+from langchain.embeddings.openai import OpenAIEmbeddings
 #from langchain_community.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
-from langchain.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
+#from langchain.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
 
 # 🌐 Load environment variable
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
@@ -47,11 +49,25 @@ llm = AzureChatOpenAI(
     max_tokens=500
 )
 
-retriever = AzureCognitiveSearchRetriever(
+#retriever = AzureCognitiveSearchRetriever(
+#    azure_search_endpoint=AZURE_SEARCH_ENDPOINT,
+#    azure_search_key=AZURE_SEARCH_ADMIN_KEY,
+#    index_name=AZURE_SEARCH_INDEX_NAME
+#)
+
+embeddings = OpenAIEmbeddings(
+    openai_api_key=AZURE_OPENAI_API_KEY,
+    openai_api_base=AZURE_OPENAI_ENDPOINT
+)
+
+vectorstore = AzureSearch(
     azure_search_endpoint=AZURE_SEARCH_ENDPOINT,
     azure_search_key=AZURE_SEARCH_ADMIN_KEY,
-    index_name=AZURE_SEARCH_INDEX_NAME
+    index_name=AZURE_SEARCH_INDEX_NAME,
+    embedding_function=embeddings.embed_query,
 )
+
+retriever = vectorstore.as_retriever()
 
 qa_chain = RetrievalQA.from_chain_type(
     llm=llm,
