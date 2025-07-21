@@ -8,6 +8,7 @@ from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain.vectorstores.azuresearch import AzureSearch
 from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain_community.embeddings.openai import OpenAIEmbeddings
 #from langchain_community.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
 #from langchain.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
 
