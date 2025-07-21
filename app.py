@@ -42,9 +42,12 @@ search_client = SearchClient(
 
 # 🔷 LangChain components
 llm = AzureChatOpenAI(
-    openai_api_key=AZURE_OPENAI_API_KEY,
-    openai_api_base=AZURE_OPENAI_ENDPOINT,
-    deployment_name=AZURE_OPENAI_DEPLOYMENT_NAME,
+    #openai_api_key=AZURE_OPENAI_API_KEY,
+    api_key=AZURE_OPENAI_API_KEY,
+    #openai_api_base=AZURE_OPENAI_ENDPOINT,
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+    #deployment_name=AZURE_OPENAI_DEPLOYMENT_NAME,
+    azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,
     temperature=0,
     max_tokens=500
 )
