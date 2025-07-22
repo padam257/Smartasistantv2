@@ -13,7 +13,7 @@ from langchain_community.embeddings.openai import OpenAIEmbeddings
 #from langchain.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
 
 # 🌐 Load environment variable
-AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_API_KEY = "5qDmdaYfOr1CCj0QCI4WOQbIyeaRlnPdFWVGpgD72Z50WKwCLkiMJQQJ99BGACYeBjFXJ3w3AAABACOGJkDP"
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
