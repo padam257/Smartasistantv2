@@ -8,7 +8,8 @@ from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain.vectorstores.azuresearch import AzureSearch
 from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain_community.embeddings.openai import OpenAIEmbeddings
+from langchain_openai import AzureOpenAIEmbeddings
+#from langchain_community.embeddings.openai import OpenAIEmbeddings
 #from langchain_community.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
 #from langchain.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
 
@@ -61,7 +62,7 @@ llm = AzureChatOpenAI(
 #    index_name=AZURE_SEARCH_INDEX_NAME
 #)
 
-embeddings = OpenAIEmbeddings(
+embeddings = AzureOpenAIEmbeddings(
     # openai_api_key=AZURE_OPENAI_API_KEY,
     # openai_api_base=AZURE_OPENAI_ENDPOINT
     openai_api_base=f"{AZURE_OPENAI_ENDPOINT}/openai/deployments/{AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME}",
