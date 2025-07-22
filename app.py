@@ -128,7 +128,11 @@ if user_query:
     # Optional: Filter by document if selected
     if query_scope != "All Documents":
     #    retriever.filter = f"metadata_storage_name eq '{query_scope}'"
-    retriever = vectorstore.as_retriever(search_kwargs={"filter": f"metadata_storage_name eq '{query_scope}'"
+         retriever = vectorstore.as_retriever(
+             search_kwargs={
+                 "filter": f"metadata_storage_name eq '{query_scope}'"
+             }   
+        }
     else:
     #    retriever.filter = None
         retriever = vectorstore.as_retriever()
