@@ -3,10 +3,10 @@ azure-identity
 PyPDF2
 azure-search-documents>=11.4.0
 python-dotenv
-langchain==0.1.16
+langchain
 langchain-community
 langchain-openai
 azure-storage-blob>=12.19.1
-openai==0.28.1
+openai
 streamlit>=1.35.0
 tiktoken>=0.5.1
