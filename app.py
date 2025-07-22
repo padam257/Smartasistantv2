@@ -49,6 +49,7 @@ llm = AzureChatOpenAI(
     azure_endpoint=AZURE_OPENAI_ENDPOINT,
     #deployment_name=AZURE_OPENAI_DEPLOYMENT_NAME,
     azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,
+    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
     temperature=0,
     max_tokens=500
 )
@@ -66,6 +67,7 @@ embeddings = OpenAIEmbeddings(
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
     openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
     deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME", "text-embedding-ada-002"),
+    openai_api_type="azure"
 )
 
 vectorstore = AzureSearch(
