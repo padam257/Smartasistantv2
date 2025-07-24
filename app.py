@@ -132,7 +132,7 @@ if user_query:
              search_kwargs={
                  "filter": f"metadata_storage_name eq '{query_scope}'"
              }   
-        }
+        )
     else:
     #    retriever.filter = None
         retriever = vectorstore.as_retriever()
