@@ -1,6 +1,6 @@
 azure-core
 azure-identity
-PyPDF2
+PyPDF
 azure-search-documents>=11.4.0
 python-dotenv
 langchain
