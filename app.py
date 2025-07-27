@@ -110,22 +110,22 @@ if uploaded_file:
     blob_container_client.upload_blob(uploaded_file.name, uploaded_file, overwrite=True)
     st.success(f"✅ Uploaded `{uploaded_file.name}`")
 
-# 1. Load PDF from Azure Blob
-loader = AzureBlobStorageFileLoader(
+    # 1. Load PDF from Azure Blob
+    loader = AzureBlobStorageFileLoader(
     conn_str=AZURE_BLOB_CONNECTION_STRING,
     container=AZURE_BLOB_CONTAINER_NAME,
     blob_name=uploaded_file.name
-)
-documents = loader.load()
+    )
+    documents = loader.load()
 
-# 2. Chunk it
-splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-docs = splitter.split_documents(documents)
+    # 2. Chunk it
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    docs = splitter.split_documents(documents)
 
-# 3. Embed and push to Azure Search
-vectorstore.add_documents(docs)
+    # 3. Embed and push to Azure Search
+    vectorstore.add_documents(docs)
 
-st.success(f"✅ Successfully indexed `{uploaded_file.name}` with {len(docs)} chunks.")
+    st.success(f"✅ Successfully indexed `{uploaded_file.name}` with {len(docs)} chunks.")
 
 # 📄 Show files in Blob
 st.header("📄 Available SOPs in Blob Storage")
