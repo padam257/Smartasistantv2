@@ -17,7 +17,8 @@ from langchain.vectorstores.azuresearch import AzureSearch
 #from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain_openai import AzureOpenAIEmbeddings
 from pathlib import Path
-from langchain_community.document_loaders import UnstructuredFileLoader
+#from langchain_community.document_loaders import UnstructuredFileLoader
+from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredFileLoader
 from langchain.document_loaders import AzureBlobStorageFileLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 #from langchain_community.embeddings.openai import OpenAIEmbeddings
@@ -114,9 +115,14 @@ if uploaded_file:
     st.success(f"✅ Uploaded `{uploaded_file.name}`to Blob")
 
     # Save locally to temp for parsing
-    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp:
-        tmp.write(uploaded_file.getvalue())
-        local_path = tmp.name
+    #with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp:
+        #tmp.write(uploaded_file.getvalue())
+        #local_path = tmp.name
+
+    local_path = f"/tmp/{uploaded_file.name}"
+    with open(local_path, "wb") as f:
+        
+        f.write(uploaded_file.read())
     
     # 1. Load PDF from Azure Blob
     #loader = AzureBlobStorageFileLoader(
@@ -127,7 +133,21 @@ if uploaded_file:
     #documents = loader.load()
 
     # Load and chunk using unstructured
-    loader = UnstructuredFileLoader(local_path)
+    #loader = UnstructuredFileLoader(local_path)
+    #documents = loader.load()
+
+    file_ext = uploaded_file.name.split(".")[-1].lower()
+
+    if file_ext == "pdf":
+        loader = PyPDFLoader(local_path)
+    elif file_ext == "txt":
+        loader = TextLoader(local_path)
+    elif file_ext == "docx":
+        loader = UnstructuredFileLoader(local_path, mode="elements")  # Requires fewer deps than full [pdf]
+    else:
+        st.error(f"Unsupported file type: {file_ext}")
+        st.stop()
+
     documents = loader.load()
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
