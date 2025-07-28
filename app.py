@@ -145,6 +145,13 @@ if uploaded_file is not None:
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         docs = splitter.split_documents(documents)
 
+    # ✅ Remove unsupported metadata before uploading
+        for doc in docs:
+            doc.metadata = {
+                k: v for k, v in doc.metadata.items()
+                if k in ["metadata_storage_name"]  # Adjust based on your schema
+            }
+        
         vectorstore.add_documents(docs)
         st.success(f"✅ Successfully indexed `{file_name}` with {len(docs)} chunks.")
     except Exception as e:
