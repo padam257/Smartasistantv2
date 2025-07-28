@@ -127,7 +127,7 @@ if uploaded_file:
     #documents = loader.load()
 
     # Load and chunk using unstructured
-    Loader = UnstructuredFileLoader(local_path)
+    loader = UnstructuredFileLoader(local_path)
     documents = loader.load()
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
