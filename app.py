@@ -154,17 +154,23 @@ if uploaded_file is not None:
      #       }
         
      # Clean and re-wrap
-        cleaned_docs = []
-        for doc in docs:
-            cleaned_doc = Document(
-                page_content=doc.page_content,
-                metadata={
-                    "metadata_storage_name": doc.metadata.get("metadata_storage_name", "")
-                }
-            )
-            cleaned_docs.append(cleaned_doc)   
+     #   cleaned_docs = []
+     #  for doc in docs:
+     #       cleaned_doc = Document(
+     #           page_content=doc.page_content,
+     #           metadata={
+     #               "metadata_storage_name": doc.metadata.get("metadata_storage_name", "")
+     #           }
+     #       )
+     #       cleaned_docs.append(cleaned_doc)   
+
+        for i, doc in enumerate(docs):
+    # Add enriched metadata for index
+            doc.metadata["metadata_storage_name"] = uploaded_file.name
+            doc.metadata["source"] = uploaded_file.name
+            doc.metadata["page"] = str(i + 1)  # or doc.metadata.get("page", "1")
             
-        vectorstore.add_documents(cleaned_docs)
+        vectorstore.add_documents(docs)
 
         st.success(f"✅ Successfully indexed `{file_name}` with {len(docs)} chunks.")
     except Exception as e:
