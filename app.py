@@ -17,6 +17,7 @@ from langchain.vectorstores.azuresearch import AzureSearch
 #from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain_openai import AzureOpenAIEmbeddings
 from pathlib import Path
+from langchain.schema import Document
 #from langchain_community.document_loaders import UnstructuredFileLoader
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredFileLoader
 from langchain.document_loaders import AzureBlobStorageFileLoader
@@ -146,13 +147,25 @@ if uploaded_file is not None:
         docs = splitter.split_documents(documents)
 
     # ✅ Remove unsupported metadata before uploading
-        for doc in docs:
-            doc.metadata = {
-                k: v for k, v in doc.metadata.items()
-                if k in ["metadata_storage_name"]  # Adjust based on your schema
-            }
+     #   for doc in docs:
+     #       doc.metadata = {
+     #           k: v for k, v in doc.metadata.items()
+     #           if k in ["metadata_storage_name"]  # Adjust based on your schema
+     #       }
         
-        vectorstore.add_documents(docs)
+     # Clean and re-wrap
+        cleaned_docs = []
+        for doc in docs:
+            cleaned_doc = Document(
+                page_content=doc.page_content,
+                metadata={
+                    "metadata_storage_name": doc.metadata.get("metadata_storage_name", "")
+                }
+            )
+            cleaned_docs.append(cleaned_doc)   
+            
+        vectorstore.add_documents(cleaned_docs)
+
         st.success(f"✅ Successfully indexed `{file_name}` with {len(docs)} chunks.")
     except Exception as e:
         st.error(f"❌ Failed to load or process document: {str(e)}")
