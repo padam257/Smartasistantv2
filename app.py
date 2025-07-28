@@ -105,62 +105,50 @@ qa_chain = RetrievalQA.from_chain_type(
 )
 
 # 🌟 UI
-st.title("🤖 SmartAssistantv2: SOP GenAI")
+st.title("🤖 SmartAssistantApp: SOP GenAI")
 st.markdown("Query your SOPs using GenAI. Upload PDFs, view existing, and query all or specific.")
 
 st.header("📄 Upload New SOP PDF")
-uploaded_file = st.file_uploader("Upload SOP", type=["pdf"])
-if uploaded_file:
-    blob_container_client.upload_blob(uploaded_file.name, uploaded_file, overwrite=True)
-    st.success(f"✅ Uploaded `{uploaded_file.name}`to Blob")
+uploaded_file = st.file_uploader("Upload SOP", type=["pdf", "txt", "docx"])
 
-    # Save locally to temp for parsing
-    #with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp:
-        #tmp.write(uploaded_file.getvalue())
-        #local_path = tmp.name
+if uploaded_file is not None:
+    file_name = uploaded_file.name
+    file_ext = file_name.split(".")[-1].lower()
+    local_path = f"/tmp/{file_name}"
 
-    local_path = f"/tmp/{uploaded_file.name}"
+    # 🔹 Save to local temp path
     with open(local_path, "wb") as f:
-        
-        f.write(uploaded_file.read())
-    
-    # 1. Load PDF from Azure Blob
-    #loader = AzureBlobStorageFileLoader(
-    #conn_str=AZURE_BLOB_CONNECTION_STRING,
-    #container=AZURE_BLOB_CONTAINER_NAME,
-    #blob_name=uploaded_file.name
-    #)
-    #documents = loader.load()
+        f.write(uploaded_file.getbuffer())
 
-    # Load and chunk using unstructured
-    #loader = UnstructuredFileLoader(local_path)
-    #documents = loader.load()
+    # 🔹 Upload to Azure Blob Storage
+    blob_container_client.upload_blob(file_name, uploaded_file, overwrite=True)
+    st.success(f"✅ Uploaded `{file_name}` to Blob")
 
-    file_ext = uploaded_file.name.split(".")[-1].lower()
-
+    # 🔹 Select loader based on file extension
     if file_ext == "pdf":
+        from langchain_community.document_loaders import PyPDFLoader
         loader = PyPDFLoader(local_path)
     elif file_ext == "txt":
+        from langchain_community.document_loaders import TextLoader
         loader = TextLoader(local_path)
     elif file_ext == "docx":
-        loader = UnstructuredFileLoader(local_path, mode="elements")  # Requires fewer deps than full [pdf]
+        from langchain_community.document_loaders import UnstructuredFileLoader
+        loader = UnstructuredFileLoader(local_path)
     else:
         st.error(f"Unsupported file type: {file_ext}")
         st.stop()
 
-    documents = loader.load()
+    # 🔹 Load, chunk and embed
+    try:
+        documents = loader.load()
+        from langchain.text_splitter import RecursiveCharacterTextSplitter
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        docs = splitter.split_documents(documents)
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    docs = splitter.split_documents(documents)
-
-    # 2. Chunk it
-    #splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    #docs = splitter.split_documents(documents)
-
-    # 3. Embed and push to Azure Search
-    vectorstore.add_documents(docs)
-
-    st.success(f"✅ Successfully indexed `{uploaded_file.name}` with {len(docs)} chunks.")
+        vectorstore.add_documents(docs)
+        st.success(f"✅ Successfully indexed `{file_name}` with {len(docs)} chunks.")
+    except Exception as e:
+        st.error(f"❌ Failed to load or process document: {str(e)}")
 
 # 📄 Show files in Blob
 st.header("📄 Available SOPs in Blob Storage")
