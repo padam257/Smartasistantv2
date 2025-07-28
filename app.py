@@ -17,6 +17,7 @@ from langchain.vectorstores.azuresearch import AzureSearch
 #from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain_openai import AzureOpenAIEmbeddings
 from pathlib import Path
+from langchain_community.document_loaders import UnstructuredFileLoader
 from langchain.document_loaders import AzureBlobStorageFileLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 #from langchain_community.embeddings.openai import OpenAIEmbeddings
