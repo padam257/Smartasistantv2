@@ -11,20 +11,12 @@ from azure.core.credentials import AzureKeyCredential
 from azure.storage.blob import BlobServiceClient
 from azure.search.documents import SearchClient
 from langchain.chat_models import AzureChatOpenAI
-from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain.vectorstores.azuresearch import AzureSearch
-#from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain_openai import AzureOpenAIEmbeddings
 from pathlib import Path
-from langchain.schema import Document
-#from langchain_community.document_loaders import UnstructuredFileLoader
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredFileLoader
-from langchain.document_loaders import AzureBlobStorageFileLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-#from langchain_community.embeddings.openai import OpenAIEmbeddings
-#from langchain_community.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
-#from langchain.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
 
 # 🌐 Load environment variable
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
@@ -58,35 +50,19 @@ search_client = SearchClient(
 
 # 🔷 LangChain components
 llm = AzureChatOpenAI(
-    #openai_api_key=AZURE_OPENAI_API_KEY,
     api_key=AZURE_OPENAI_API_KEY,
-    #openai_api_base=AZURE_OPENAI_ENDPOINT,
     azure_endpoint=AZURE_OPENAI_ENDPOINT,
-    #deployment_name=AZURE_OPENAI_DEPLOYMENT_NAME,
     azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,
     api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
     temperature=0,
     max_tokens=500
 )
 
-#retriever = AzureCognitiveSearchRetriever(
-#    azure_search_endpoint=AZURE_SEARCH_ENDPOINT,
-#    azure_search_key=AZURE_SEARCH_ADMIN_KEY,
-#    index_name=AZURE_SEARCH_INDEX_NAME
-#)
-
 embeddings = AzureOpenAIEmbeddings(
-    # openai_api_key=AZURE_OPENAI_API_KEY,
-    # openai_api_base=AZURE_OPENAI_ENDPOINT
-    # openai_api_base=f"{AZURE_OPENAI_ENDPOINT}/openai/deployments/{AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME}",
-    #openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
     azure_deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"),
-    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
-    #openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
-    #deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME", "text-embedding-ada-002"),
-    #openai_api_type="azure"
+    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
 )
 
 vectorstore = AzureSearch(
@@ -127,53 +103,47 @@ if uploaded_file is not None:
 
     # 🔹 Select loader based on file extension
     if file_ext == "pdf":
-        from langchain_community.document_loaders import PyPDFLoader
         loader = PyPDFLoader(local_path)
     elif file_ext == "txt":
-        from langchain_community.document_loaders import TextLoader
         loader = TextLoader(local_path)
     elif file_ext == "docx":
-        from langchain_community.document_loaders import UnstructuredFileLoader
         loader = UnstructuredFileLoader(local_path)
     else:
         st.error(f"Unsupported file type: {file_ext}")
         st.stop()
 
-    # 🔹 Load, chunk and embed
     try:
         documents = loader.load()
-        from langchain.text_splitter import RecursiveCharacterTextSplitter
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         docs = splitter.split_documents(documents)
 
-    # Flatten metadata and REMOVE 'metadata' key if nested
+        # 🧹 Clean metadata
         for doc in docs:
             flat_meta = {}
             for k, v in doc.metadata.items():
                 if k == "metadata" and isinstance(v, dict):
-                    flat_meta.update(v)  # merge nested fields
+                    flat_meta.update(v)
                 else:
                     flat_meta[k] = v
 
-    # Ensure only fields defined in index exist
             allowed_keys = {"source", "page", "metadata_storage_name"}
-            flat_meta = {k: v for k, v in flat_meta.items() if k in allowed_keys}
-
-    # Ensure correct types
-            flat_meta["source"] = str(flat_meta.get("source", ""))
+            filtered_meta = {k: flat_meta.get(k, "") for k in allowed_keys}
+            filtered_meta["source"] = str(filtered_meta.get("source", ""))
             try:
-                flat_meta["page"] = int(flat_meta.get("page", 0))
+                filtered_meta["page"] = int(filtered_meta.get("page", 0))
             except:
-                flat_meta["page"] = 0
-            
-            doc.metadata = flat_meta
+                filtered_meta["page"] = 0
+            doc.metadata = filtered_meta
 
-            st.write("✅ Example document to be pushed:")
-            st.write("Debug metadata sample:", docs[0].metadata)
+        for doc in docs[:3]:
+            st.text("✅ Example document to be pushed:")
+            st.code(doc.page_content[:200])
+            st.text("Debug metadata sample:")
+            st.json(doc.metadata)
 
         vectorstore.add_documents(docs)
-
         st.success(f"✅ Successfully indexed `{file_name}` with {len(docs)} chunks.")
+
     except Exception as e:
         st.error(f"❌ Failed to load or process document: {str(e)}")
 
@@ -194,24 +164,19 @@ query_scope = st.selectbox("Run query on:", ["All Documents"] + doc_names, index
 user_query = st.text_input("Your question:")
 
 if user_query:
-    # Optional: Filter by document if selected
     if query_scope != "All Documents":
-    #    retriever.filter = f"metadata_storage_name eq '{query_scope}'"
-         retriever = vectorstore.as_retriever(
-             search_kwargs={
-                 "filter": f"metadata_storage_name eq '{query_scope}'"
-             }   
+        retriever = vectorstore.as_retriever(
+            search_kwargs={"filter": f"metadata_storage_name eq '{query_scope}'"}
         )
     else:
-    #    retriever.filter = None
         retriever = vectorstore.as_retriever()
 
     with st.spinner("Fetching answer..."):
-        result = qa_chain(user_query)
+        result = qa_chain.run(user_query)
 
     st.markdown("### 📝 Answer:")
-    st.write(result['result'])
+    st.write(result)
 
     st.markdown("### 📄 Source Chunks:")
-    for doc in result['source_documents']:
-        st.write(doc.page_content[:500])  # Show first 500 chars of each
+    for doc in result.get("source_documents", []):
+        st.write(doc.page_content[:500])
