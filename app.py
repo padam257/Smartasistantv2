@@ -175,7 +175,7 @@ if uploaded_file is not None:
         vectorstore.add_documents(docs)
 
         st.success(f"✅ Successfully indexed `{file_name}` with {len(docs)} chunks.")
-    except Exception as e:
+    except: Exception as e:
         st.error(f"❌ Failed to load or process document: {str(e)}")
 
 # 📄 Show files in Blob
