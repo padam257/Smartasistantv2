@@ -106,26 +106,45 @@ if uploaded_file:
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         docs = splitter.split_documents(documents)
 
-        cleaned_docs = []
+        from langchain.schema import Document
+
+        flattened_docs = []
         for doc in docs:
-            original_meta = doc.metadata or {}
-            cleaned_meta = {
-                "source": str(original_meta.get("source", local_path)),
-                "page": int(original_meta.get("page", 0)),
-                "metadata_storage_name": file_name
-            }
+            meta = doc.metadata or {}
+
+    # Flatten nested metadata
+            flat_meta = {}
+            for k, v in meta.items():
+                if k == "metadata" and isinstance(v, dict):
+                    flat_meta.update(v)
+                else:
+                    flat_meta[k] = v
+
+    # Only allowed fields
+            allowed_keys = {"source", "page", "metadata_storage_name"}
+            flat_meta = {k: v for k, v in flat_meta.items() if k in allowed_keys}
+
+    # Type checks
+            flat_meta["source"] = str(flat_meta.get("source", ""))
+            try:
+                flat_meta["page"] = int(flat_meta.get("page", 0))
+            except Exception:
+                flat_meta["page"] = 0
+
+            flat_meta["metadata_storage_name"] = os.path.basename(local_path)
+
+            # Create sanitized Document (no nested metadata key!)
+            clean_doc = Document(
+                page_content=doc.page_content,
+                metadata=flat_meta
+            )
 
             st.write("✅ Example document to be pushed:")
-            st.write(doc.page_content[:200])
-            st.write("Debug metadata sample:")
-            st.json(cleaned_meta)
+            st.write(clean_doc.page_content[:300])
+            st.write("Metadata:", clean_doc.metadata)
 
-            cleaned_docs.append(Document(page_content=doc.page_content, metadata=cleaned_meta))
+            flattened_docs.append(clean_docs)
 
-        for d in cleaned_docs:
-            st.write("Uploading chunk to Azure Search:")
-            st.write("Text:", d.page_content[:100])
-            st.write("Metadata:", d.metadata)
 
         vectorstore.add_documents(cleaned_docs)
         st.success(f"✅ Successfully indexed `{file_name}` with {len(cleaned_docs)} chunks.")
