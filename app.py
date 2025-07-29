@@ -164,11 +164,22 @@ if uploaded_file is not None:
      #       )
      #       cleaned_docs.append(cleaned_doc)   
 
-        for i, doc in enumerate(docs):
-    # Add enriched metadata for index
-            doc.metadata["metadata_storage_name"] = uploaded_file.name
-            doc.metadata["source"] = uploaded_file.name
-            doc.metadata["page"] = str(i + 1)  # or doc.metadata.get("page", "1")
+        # Flatten metadata fields: source, page
+        for doc in docs:
+            if "source" in doc.metadata:
+                doc.metadata["source"] = str(doc.metadata["source"])  # must be string
+            if "page" in doc.metadata:
+                try:
+                    doc.metadata["page"] = int(doc.metadata["page"])  # must be int32
+                except:
+                    doc.metadata["page"] = 0  # fallback if conversion fails
+
+        # Flatten nested metadata if exists
+            if "metadata" in doc.metadata:
+                nested_meta = doc.metadata.pop("metadata")
+            if isinstance(nested_meta, dict):
+                for k, v in nested_meta.items():
+                    doc.metadata[k] = v
             
         vectorstore.add_documents(docs)
 
