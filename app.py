@@ -146,45 +146,33 @@ if uploaded_file is not None:
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         docs = splitter.split_documents(documents)
 
-    # ✅ Remove unsupported metadata before uploading
-     #   for doc in docs:
-     #       doc.metadata = {
-     #           k: v for k, v in doc.metadata.items()
-     #           if k in ["metadata_storage_name"]  # Adjust based on your schema
-     #       }
-        
-     # Clean and re-wrap
-     #   cleaned_docs = []
-     #  for doc in docs:
-     #       cleaned_doc = Document(
-     #           page_content=doc.page_content,
-     #           metadata={
-     #               "metadata_storage_name": doc.metadata.get("metadata_storage_name", "")
-     #           }
-     #       )
-     #       cleaned_docs.append(cleaned_doc)   
+    # Flatten metadata and REMOVE 'metadata' key if nested
+    for doc in docs:
+        flat_meta = {}
 
-    # 🔧 Flatten metadata if nested and ensure required fields are correct
-        for doc in docs:
-            metadata = doc.metadata
+    # Flatten any nested dict under 'metadata'
+    for k, v in doc.metadata.items():
+        if k == "metadata" and isinstance(v, dict):
+            flat_meta.update(v)  # merge nested fields
+        else:
+            flat_meta[k] = v
 
-    # Move nested metadata fields up if present
-            if "metadata" in metadata and isinstance(metadata["metadata"], dict):
-                for key, value in metadata["metadata"].items():
-                    metadata[key] = value
-                del metadata["metadata"]  # Remove nested 'metadata' key
+    # Ensure only fields defined in index exist
+    allowed_keys = {"source", "page", "metadata_storage_name"}
+        flat_meta = {k: v for k, v in flat_meta.items() if k in allowed_keys}
 
-    # Ensure 'source' is a string
-            if "source" in metadata:
-                metadata["source"] = str(metadata["source"])
+    # Ensure correct types
+    flat_meta["source"] = str(flat_meta.get("source", ""))
+    try:
+        flat_meta["page"] = int(flat_meta.get("page", 0))
+    except:
+        flat_meta["page"] = 0
 
-    # Ensure 'page' is an integer
-            if "page" in metadata:
-                try:
-                    metadata["page"] = int(metadata["page"])
-                except:
-                    metadata["page"] = 0  # fallback value
-            
+    doc.metadata = flat_meta
+
+        st.write("✅ Example document to be pushed:")
+        st.write(docs[0].metadata)
+
         vectorstore.add_documents(docs)
 
         st.success(f"✅ Successfully indexed `{file_name}` with {len(docs)} chunks.")
