@@ -164,22 +164,26 @@ if uploaded_file is not None:
      #       )
      #       cleaned_docs.append(cleaned_doc)   
 
-        # Flatten metadata fields: source, page
+    # 🔧 Flatten metadata if nested and ensure required fields are correct
         for doc in docs:
-            if "source" in doc.metadata:
-                doc.metadata["source"] = str(doc.metadata["source"])  # must be string
-            if "page" in doc.metadata:
-                try:
-                    doc.metadata["page"] = int(doc.metadata["page"])  # must be int32
-                except:
-                    doc.metadata["page"] = 0  # fallback if conversion fails
+            metadata = doc.metadata
 
-        # Flatten nested metadata if exists
-            if "metadata" in doc.metadata:
-                nested_meta = doc.metadata.pop("metadata")
-            if isinstance(nested_meta, dict):
-                for k, v in nested_meta.items():
-                    doc.metadata[k] = v
+    # Move nested metadata fields up if present
+            if "metadata" in metadata and isinstance(metadata["metadata"], dict):
+                for key, value in metadata["metadata"].items():
+                    metadata[key] = value
+                del metadata["metadata"]  # Remove nested 'metadata' key
+
+    # Ensure 'source' is a string
+            if "source" in metadata:
+                metadata["source"] = str(metadata["source"])
+
+    # Ensure 'page' is an integer
+            if "page" in metadata:
+                try:
+                    metadata["page"] = int(metadata["page"])
+                except:
+                    metadata["page"] = 0  # fallback value
             
         vectorstore.add_documents(docs)
 
