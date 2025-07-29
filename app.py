@@ -149,8 +149,6 @@ if uploaded_file is not None:
     # Flatten metadata and REMOVE 'metadata' key if nested
         for doc in docs:
             flat_meta = {}
-
-    # Flatten any nested dict under 'metadata'
             for k, v in doc.metadata.items():
                 if k == "metadata" and isinstance(v, dict):
                     flat_meta.update(v)  # merge nested fields
@@ -162,18 +160,18 @@ if uploaded_file is not None:
             flat_meta = {k: v for k, v in flat_meta.items() if k in allowed_keys}
 
     # Ensure correct types
-        flat_meta["source"] = str(flat_meta.get("source", ""))
-        try:
-            flat_meta["page"] = int(flat_meta.get("page", 0))
-        except:
-            flat_meta["page"] = 0
+            flat_meta["source"] = str(flat_meta.get("source", ""))
+            try:
+                flat_meta["page"] = int(flat_meta.get("page", 0))
+            except:
+                flat_meta["page"] = 0
             
-        doc.metadata = flat_meta
+            doc.metadata = flat_meta
 
-        st.write("✅ Example document to be pushed:")
-        st.write("Debug metadata sample:", docs[0].metadata)
+            st.write("✅ Example document to be pushed:")
+            st.write("Debug metadata sample:", docs[0].metadata)
 
-    vectorstore.add_documents(docs)
+        vectorstore.add_documents(docs)
 
         st.success(f"✅ Successfully indexed `{file_name}` with {len(docs)} chunks.")
     except Exception as e:
