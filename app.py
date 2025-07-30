@@ -146,8 +146,8 @@ if uploaded_file:
             flattened_docs.append(clean_docs)
 
 
-        vectorstore.add_documents(docs)
-        st.success(f"✅ Successfully indexed `{file_name}` with {len(cleaned_docs)} chunks.")
+        vectorstore.add_documents(flattened_docs)
+        st.success(f"✅ Successfully indexed `{file_name}` with {len(flattened_docs)} chunks.")
 
     except Exception as e:
         st.error(f"❌ Failed to load or process document: {str(e)}")
