@@ -143,7 +143,7 @@ if uploaded_file:
             st.write(clean_doc.page_content[:300])
             st.write("Metadata:", clean_doc.metadata)
 
-            flattened_docs.append(clean_docs)
+            flattened_docs.append(clean_doc)
 
 
         vectorstore.add_documents(flattened_docs)
