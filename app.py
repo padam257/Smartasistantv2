@@ -134,6 +134,10 @@ if uploaded_file:
             flat_meta["metadata_storage_name"] = os.path.basename(local_path)
 
             # Create sanitized Document (no nested metadata key!)
+            # Ensure no 'metadata' key sneaks in
+            if 'metadata' in flat_meta:
+                del flat_meta['metadata']    
+
             clean_doc = Document(
                 page_content=doc.page_content,
                 metadata=flat_meta
