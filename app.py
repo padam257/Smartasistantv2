@@ -190,6 +190,7 @@ if user_query:
     st.markdown("### 📄 Source Chunks:")
     for doc in result['source_documents']:
         st.write(doc.page_content[:500])
-# END #
+# END 
+
 
 
