@@ -8,11 +8,14 @@ from azure.storage.blob import BlobServiceClient
 from azure.search.documents import SearchClient
 # from langchain.chat_models import AzureChatOpenAI
 from langchain_openai import AzureChatOpenAI
-from langchain.prompts import PromptTemplate
+# from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
-from langchain.vectorstores.azuresearch import AzureSearch
+# from langchain.vectorstores.azuresearch import AzureSearch
+from langchain_community.vectorstores.azuresearch import AzureSearch
 from langchain_openai import AzureOpenAIEmbeddings
-from langchain.schema import Document
+# from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredFileLoader
 
@@ -188,4 +191,5 @@ if user_query:
     for doc in result['source_documents']:
         st.write(doc.page_content[:500])
 # END #
+
 
