@@ -11,3 +11,4 @@ openai
 streamlit>=1.35.0
 tiktoken>=0.5.1
 unstructured
+PyMuPDF
