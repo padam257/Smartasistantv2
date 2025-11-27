@@ -6,7 +6,8 @@ from pathlib import Path
 from azure.core.credentials import AzureKeyCredential
 from azure.storage.blob import BlobServiceClient
 from azure.search.documents import SearchClient
-from langchain.chat_models import AzureChatOpenAI
+# from langchain.chat_models import AzureChatOpenAI
+from langchain_openai import AzureChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain.vectorstores.azuresearch import AzureSearch
@@ -187,3 +188,4 @@ if user_query:
     for doc in result['source_documents']:
         st.write(doc.page_content[:500])
 # END #
+
