@@ -4,19 +4,22 @@ import openai
 import streamlit as st
 from pathlib import Path
 import tempfile
+from typing import List
 
 from azure.core.credentials import AzureKeyCredential
 from azure.storage.blob import BlobServiceClient
 from azure.search.documents import SearchClient
 
-# lightweight langchain pieces (only for embeddings + vectorstore wrapper)
+# embeddings + vectorstore wrapper
 from langchain_openai import AzureOpenAIEmbeddings
 from langchain_community.vectorstores.azuresearch import AzureSearch
 
-# basic text splitter & loader
-# from langchain.text_splitter import RecursiveCharacterTextSplitter
+# text splitters & loaders
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredFileLoader
+
+# Document class for indexing
+from langchain_core.documents import Document
 
 # -------------------------
 # Configuration (env vars)
@@ -28,7 +31,7 @@ openai.api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
 
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")                # chat / completion deployment
+AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")  # chat / completion deployment
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")  # embedding deployment
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_ADMIN_KEY = os.getenv("AZURE_SEARCH_ADMIN_KEY")
@@ -78,7 +81,6 @@ except Exception as e:
 # -------------------------
 # Embeddings & vectorstore (LangChain wrappers)
 # -------------------------
-# NOTE: these objects are used for embedding / retrieving docs only.
 embeddings = AzureOpenAIEmbeddings(
     api_key=AZURE_OPENAI_API_KEY,
     azure_endpoint=AZURE_OPENAI_ENDPOINT,
@@ -93,24 +95,59 @@ vectorstore = AzureSearch(
     embedding_function=embeddings.embed_query,
 )
 
-# Helper to retrieve top-k docs for a query using the vectorstore's retriever
-def retrieve_top_docs(query: str, k: int = 5):
-    retriever = vectorstore.as_retriever()
-    # retriever usually exposes get_relevant_documents
+# -------------------------
+# Helper: robust retriever invocation
+# -------------------------
+def call_retriever(retriever, query: str, k: int = 5):
+    """
+    Call a retriever object that might implement different APIs:
+      - invoke / ainvoke (new Runnable-style)
+      - get_relevant_documents (older style)
+      - get_relevant_documents(query, k=k)
+    Returns a list of Document-like objects or dicts.
+    """
+    # Try invoke with simple string
     try:
-        docs = retriever.get_relevant_documents(query)  # default k used by retriever
-    except TypeError:
-        # older/newer mismatch; try get_relevant_documents with k
-        docs = retriever.get_relevant_documents(query, k=k)
-    # ensure we return at most k
-    return docs[:k]
+        if hasattr(retriever, "invoke"):
+            # Some retrievers accept a plain string
+            try:
+                res = retriever.invoke(query)
+            except TypeError:
+                # Some expect a dict: {"query": query, "k": k}
+                res = retriever.invoke({"query": query, "k": k})
+            return list(res or [])[:k]
+    except Exception:
+        # fallthrough to next attempt
+        pass
+
+    # Try get_relevant_documents
+    try:
+        if hasattr(retriever, "get_relevant_documents"):
+            try:
+                return retriever.get_relevant_documents(query)[:k]
+            except TypeError:
+                return retriever.get_relevant_documents(query, k=k)[:k]
+    except Exception:
+        pass
+
+    # Try get_relevant_sources or similar
+    try:
+        if hasattr(retriever, "get_relevant_sources"):
+            return retriever.get_relevant_sources(query)[:k]
+    except Exception:
+        pass
+
+    # Nothing worked
+    raise RuntimeError("Retriever does not support known retrieval methods (invoke/get_relevant_documents).")
 
 # -------------------------
 # Streamlit UI
 # -------------------------
 st.set_page_config(page_title="SmartAssistantApp", layout="wide")
 st.title("🤖 SmartAssistantApp: SOP GenAI")
-st.markdown("Upload SOPs (pdf/txt/docx), index them, and ask questions. Answers are produced using Azure OpenAI and Azure Cognitive Search vectors.")
+st.markdown(
+    "Upload SOPs (pdf/txt/docx), index them, and ask questions. Answers are produced using Azure OpenAI and Azure Cognitive Search vectors."
+)
 
 # Upload section
 st.header("📄 Upload New SOP")
@@ -148,25 +185,21 @@ if uploaded_file:
         chunks = splitter.split_documents(documents)
 
         # convert and sanitize metadata for Azure Search
-        to_index = []
+        to_index: List[Document] = []
         for c in chunks:
             meta = c.metadata or {}
-            # minimal allowed metadata keys for index
             metadata_storage_name = meta.get("metadata_storage_name", file_name)
             page = meta.get("page", 0)
             source = meta.get("source", metadata_storage_name)
 
-            # create simple dict object expected by vectorstore.add_documents
-            # langchain's Document is not strictly necessary; AzureSearch wrapper accepts dicts too.
-            # We'll pass as LangChain Document style if supported.
-            doc_obj = {
-                "page_content": c.page_content,
-                "metadata": {
-                    "metadata_storage_name": metadata_storage_name,
-                    "page": int(page) if isinstance(page, (int, str)) and str(page).isdigit() else 0,
-                    "source": source
-                }
+            clean_meta = {
+                "metadata_storage_name": metadata_storage_name,
+                "page": int(page) if isinstance(page, (int, str)) and str(page).isdigit() else 0,
+                "source": str(source),
             }
+
+            # Create a langchain_core Document so AzureSearch wrapper sees .id etc.
+            doc_obj = Document(page_content=c.page_content, metadata=clean_meta)
             to_index.append(doc_obj)
 
         # add to vectorstore (this will create embeddings and push to Azure Search index)
@@ -196,39 +229,49 @@ query_scope = st.selectbox("Run query on:", ["All Documents"] + doc_names, index
 user_query = st.text_input("Your question:")
 
 if user_query:
-    # retrieve docs (optionally filtered by metadata_storage_name)
-    if query_scope != "All Documents":
-        # apply simple filter by metadata name via retriever if supported by vectorstore
-        # The azuresearch retriever supports search_kwargs — use as_retriever with filter if available
-        try:
-            retr = vectorstore.as_retriever(search_kwargs={"filter": f"metadata_storage_name eq '{query_scope}'"})
-            docs = retr.get_relevant_documents(user_query)
-        except Exception:
-            docs = retrieve_top_docs(user_query, k=5)
-    else:
-        docs = retrieve_top_docs(user_query, k=5)
+    # Build retriever (with optional filter)
+    try:
+        if query_scope != "All Documents":
+            retriever = vectorstore.as_retriever(search_kwargs={"filter": f"metadata_storage_name eq '{query_scope}'"})
+        else:
+            retriever = vectorstore.as_retriever()
+    except Exception as e:
+        st.error(f"Failed to create retriever: {e}")
+        st.stop()
+
+    # Retrieve docs using robust helper
+    try:
+        docs = call_retriever(retriever, user_query, k=5)
+    except Exception as e:
+        st.error(f"Retrieval failed: {e}")
+        docs = []
 
     if not docs:
         st.warning("No relevant documents found.")
     else:
         # Build context from retrieved docs
         context_parts = []
+        normalized_docs = []
         for i, d in enumerate(docs):
             # doc might be langchain Document or dict
             if hasattr(d, "page_content"):
                 content = d.page_content
                 meta = getattr(d, "metadata", {}) or {}
             else:
-                content = d.get("page_content") or d.get("content") or ""
+                # Some retrievers return dict-like objects
+                content = d.get("page_content") or d.get("content") or d.get("text") or ""
                 meta = d.get("metadata", {}) or {}
 
             source_name = meta.get("metadata_storage_name", meta.get("source", f"doc_{i}"))
             snippet = content.strip()
             context_parts.append(f"---\nSource: {source_name}\n{snippet}\n")
 
+            # normalize into a simple dict for display / debugging
+            normalized_docs.append({"source": source_name, "content": snippet})
+
         context_combined = "\n".join(context_parts)
 
-        # Construct the messages for Azure OpenAI chat completion (system + user)
+        # Construct messages for Azure OpenAI chat
         system_message = {
             "role": "system",
             "content": (
@@ -260,15 +303,6 @@ if user_query:
             st.write(answer)
 
             st.subheader("📄 Source Chunks")
-            for d in docs:
-                if hasattr(d, "page_content"):
-                    content = d.page_content
-                    meta = getattr(d, "metadata", {}) or {}
-                else:
-                    content = d.get("page_content") or d.get("content") or ""
-                    meta = d.get("metadata", {}) or {}
-
-                source_name = meta.get("metadata_storage_name", meta.get("source", "unknown"))
-                st.markdown(f"**Source:** {source_name}")
-                st.write(content[:1000])
-
+            for nd in normalized_docs:
+                st.markdown(f"**Source:** {nd['source']}")
+                st.write(nd["content"][:1000])
