@@ -9,6 +9,7 @@ from typing import List
 from azure.core.credentials import AzureKeyCredential
 from azure.storage.blob import BlobServiceClient
 from azure.search.documents import SearchClient
+from langchain_openai import AzureChatOpenAI
 
 # embeddings + vectorstore wrapper
 from langchain_openai import AzureOpenAIEmbeddings
@@ -286,14 +287,18 @@ if user_query:
         }
 
         # Call Azure OpenAI Chat Completion using openai SDK (model = deployment name)
+        llm = AzureChatOpenAI(
+            api_key=AZURE_OPENAI_API_KEY,
+            azure_endpoint=AZURE_OPENAI_ENDPOINT,
+            azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
+            temperature=0,
+            max_tokens=500,
+        )
+
         try:
-            completion = openai.ChatCompletion.create(
-                model=AZURE_OPENAI_DEPLOYMENT_NAME,
-                messages=[system_message, user_message],
-                max_tokens=500,
-                temperature=0,
-            )
-            answer = completion["choices"][0]["message"]["content"].strip()
+            response = llm.invoke([system_message, user_message])
+            answer = response.content
         except Exception as e:
             st.error(f"Generation failed: {e}")
             answer = None
@@ -306,3 +311,4 @@ if user_query:
             for nd in normalized_docs:
                 st.markdown(f"**Source:** {nd['source']}")
                 st.write(nd["content"][:1000])
+
