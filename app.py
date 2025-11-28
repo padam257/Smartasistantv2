@@ -2,7 +2,7 @@
 import streamlit as st
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.azuresearch import AzureSearch
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
@@ -195,3 +195,4 @@ if question:
         st.markdown(f"**Source #{i}:**")
         st.write(d.page_content)
         st.markdown("---")
+
