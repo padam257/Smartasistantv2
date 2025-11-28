@@ -14,7 +14,8 @@ from langchain_openai import AzureOpenAIEmbeddings
 from langchain_community.vectorstores.azuresearch import AzureSearch
 
 # basic text splitter & loader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+# from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredFileLoader
 
 # -------------------------
@@ -270,3 +271,4 @@ if user_query:
                 source_name = meta.get("metadata_storage_name", meta.get("source", "unknown"))
                 st.markdown(f"**Source:** {source_name}")
                 st.write(content[:1000])
+
