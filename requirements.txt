@@ -10,6 +10,7 @@ python-dotenv
 azure-identity
 azure-storage-blob
 azure-search-documents>=11.4.0
-openai==0.28.1
+openai>=1.0.0
 tiktoken
 langchain-text-splitters
+
