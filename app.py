@@ -1,412 +1,277 @@
 # app.py
 import os
+import uuid
 import streamlit as st
-import tempfile
-from typing import List, Dict
+from pydantic import BaseModel
+from dotenv import load_dotenv
 
-# OpenAI new client (>=1.0.0)
-from openai import OpenAI
-
-# Azure clients
-from azure.core.credentials import AzureKeyCredential
 from azure.storage.blob import BlobServiceClient
 from azure.search.documents import SearchClient
+from azure.search.documents.models import VectorQuery
 
-# LangChain / community wrappers for embeddings & vectorstore
-from langchain_openai import AzureOpenAIEmbeddings
-from langchain_community.vectorstores.azuresearch import AzureSearch
-
-# Document loader + splitter
-from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredFileLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_openai import AzureOpenAIEmbeddings
 
-# Document model (try core path, fallback to older schema)
-try:
-    from langchain_core.documents import Document
-except Exception:
-    from langchain.schema import Document
+from openai import AzureOpenAI
 
 
 # ---------------------------------------------------------
-#  CONFIG: environment variables / streamlit secrets
+# SAFE SECRET LOADING
 # ---------------------------------------------------------
-# You may put these in Streamlit secrets or environment variables.
-# Example Streamlit secrets keys used below:
-# - AZURE_OPENAI_ENDPOINT
-# - AZURE_OPENAI_API_KEY
-# - AZURE_OPENAI_API_VERSION
-# - AZURE_OPENAI_DEPLOYMENT_NAME
-# - AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME
-# - AZURE_SEARCH_ENDPOINT
-# - AZURE_SEARCH_ADMIN_KEY
-# - AZURE_SEARCH_INDEX_NAME
-# - AZURE_BLOB_CONNECTION_STRING
-# - AZURE_BLOB_CONTAINER_NAME
-
-# Read from st.secrets if present, otherwise os.environ
-def get_secret(k: str):
-    return st.secrets.get(k) if hasattr(st, "secrets") and k in st.secrets else os.environ.get(k)
-
-AZURE_OPENAI_ENDPOINT = get_secret("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_API_KEY = get_secret("AZURE_OPENAI_API_KEY")
-AZURE_OPENAI_API_VERSION = get_secret("AZURE_OPENAI_API_VERSION") or "2024-02-15-preview"
-AZURE_OPENAI_DEPLOYMENT_NAME = get_secret("AZURE_OPENAI_DEPLOYMENT_NAME")
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME = get_secret("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")
-
-AZURE_SEARCH_ENDPOINT = get_secret("AZURE_SEARCH_ENDPOINT")
-AZURE_SEARCH_ADMIN_KEY = get_secret("AZURE_SEARCH_ADMIN_KEY")
-AZURE_SEARCH_INDEX_NAME = get_secret("AZURE_SEARCH_INDEX_NAME")
-
-AZURE_BLOB_CONNECTION_STRING = get_secret("AZURE_BLOB_CONNECTION_STRING")
-AZURE_BLOB_CONTAINER_NAME = get_secret("AZURE_BLOB_CONTAINER_NAME") or "smartassistant-sops"
-
-# Minimal required check
-required = {
-    "AZURE_OPENAI_ENDPOINT": AZURE_OPENAI_ENDPOINT,
-    "AZURE_OPENAI_API_KEY": AZURE_OPENAI_API_KEY,
-    "AZURE_OPENAI_DEPLOYMENT_NAME": AZURE_OPENAI_DEPLOYMENT_NAME,
-    "AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME": AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME,
-    "AZURE_SEARCH_ENDPOINT": AZURE_SEARCH_ENDPOINT,
-    "AZURE_SEARCH_ADMIN_KEY": AZURE_SEARCH_ADMIN_KEY,
-    "AZURE_SEARCH_INDEX_NAME": AZURE_SEARCH_INDEX_NAME,
-    "AZURE_BLOB_CONNECTION_STRING": AZURE_BLOB_CONNECTION_STRING,
-}
-
-missing = [k for k, v in required.items() if not v]
-if missing:
-    st.error("Missing required configuration: " + ", ".join(missing))
-    st.stop()
+def get_secret(key: str):
+    # Attempt Streamlit secrets only if available AND safe
+    try:
+        if hasattr(st, "secrets") and st.secrets and key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    # Fallback to environment variables
+    return os.environ.get(key)
 
 
 # ---------------------------------------------------------
-# Simple Role-Based (Option A) credentials
-# Replace / integrate with your user DB if needed
+# PAGE CONFIG
 # ---------------------------------------------------------
-USERS = {
-    "admin": {"password": "admin123", "role": "admin"},
-    "user1": {"password": "pass123", "role": "user"},
-    "user2": {"password": "pass456", "role": "user"},
-}
+st.set_page_config(page_title="SmartAssistant App", layout="wide")
 
-# Initialize session-state containers
-if "logged_in" not in st.session_state:
-    st.session_state["logged_in"] = False
-if "users" not in st.session_state:
-    st.session_state["users"] = {}  # maps username -> {history: [...], uploads: [...]}
-if "last_answer" not in st.session_state:
-    st.session_state["last_answer"] = ""
-if "last_docs" not in st.session_state:
-    st.session_state["last_docs"] = []
+load_dotenv()
 
 
-def login_box():
-    st.sidebar.subheader("🔐 Sign in")
-    username = st.sidebar.text_input("Username", key="login_username")
-    pwd = st.sidebar.text_input("Password", type="password", key="login_pwd")
-    if st.sidebar.button("Sign in"):
-        if username in USERS and USERS[username]["password"] == pwd:
-            st.session_state["logged_in"] = True
-            st.session_state["user_id"] = username
-            st.session_state["role"] = USERS[username]["role"]
-            if username not in st.session_state["users"]:
-                st.session_state["users"][username] = {"history": [], "uploads": []}
+# ---------------------------------------------------------
+# AUTHENTICATION (simple username/password)
+# ---------------------------------------------------------
+def login():
+    st.title("🔐 SmartAssistant Login")
+
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login")
+
+    if submitted:
+        if username == get_secret("ADMIN_USERNAME") and password == get_secret("ADMIN_PASSWORD"):
+            st.session_state["authenticated"] = True
+            st.session_state["user"] = username
+            st.session_state["chat_history"] = []     # User-specific chat history
+            st.success("Login successful!")
             st.experimental_rerun()
         else:
-            st.sidebar.error("Invalid username or password")
+            st.error("Invalid username or password")
 
 
-def logout():
-    keys = ["logged_in", "user_id", "role", "last_answer", "last_docs"]
-    for k in keys:
-        if k in st.session_state:
-            del st.session_state[k]
-    st.experimental_rerun()
-
-
-def clear_user_ui():
-    """Clear only UI/session history for current user (no deletion from Azure Search)"""
-    user = st.session_state.get("user_id")
-    if user and user in st.session_state["users"]:
-        st.session_state["users"][user]["history"] = []
-        st.session_state["last_answer"] = ""
-        st.session_state["last_docs"] = []
-    st.success("Cleared session view (user-local).")
-
-
-# ---------------------------------------------------------
-# Initialize Azure clients (blob + search wrapper + openai client)
-# ---------------------------------------------------------
-try:
-    blob_service = BlobServiceClient.from_connection_string(AZURE_BLOB_CONNECTION_STRING)
-    blob_container_client = blob_service.get_container_client(AZURE_BLOB_CONTAINER_NAME)
-except Exception as e:
-    st.error(f"Failed to initialize Blob client: {e}")
+if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
+    login()
     st.stop()
 
-# Note: we use the langchain wrapper AzureSearch; below we build embeddings that it uses.
-embeddings = AzureOpenAIEmbeddings(
-    api_key=AZURE_OPENAI_API_KEY,
+
+# ---------------------------------------------------------
+# LOAD CONFIG
+# ---------------------------------------------------------
+AZURE_OPENAI_ENDPOINT = get_secret("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_API_KEY = get_secret("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_DEPLOYMENT = get_secret("AZURE_OPENAI_DEPLOYMENT_NAME")
+AZURE_OPENAI_API_VERSION = get_secret("AZURE_OPENAI_API_VERSION")
+
+AZURE_SEARCH_ENDPOINT = get_secret("AZURE_SEARCH_ENDPOINT")
+AZURE_SEARCH_KEY = get_secret("AZURE_SEARCH_KEY")
+AZURE_SEARCH_INDEX = get_secret("AZURE_SEARCH_INDEX")
+
+AZURE_STORAGE_CONNECTION = get_secret("AZURE_STORAGE_CONNECTION_STRING")
+AZURE_STORAGE_CONTAINER = get_secret("AZURE_STORAGE_CONTAINER")
+
+
+# ---------------------------------------------------------
+# OPENAI CLIENT
+# ---------------------------------------------------------
+openai_client = AzureOpenAI(
     azure_endpoint=AZURE_OPENAI_ENDPOINT,
-    azure_deployment=AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME,
+    api_key=AZURE_OPENAI_API_KEY,
     api_version=AZURE_OPENAI_API_VERSION,
 )
 
-# New OpenAI client for chat (openai>=1.x)
-# Configure the OpenAI client to talk to Azure
-openai_client = OpenAI(
+
+# ---------------------------------------------------------
+# EMBEDDINGS
+# ---------------------------------------------------------
+embedder = AzureOpenAIEmbeddings(
+    azure_deployment=AZURE_OPENAI_DEPLOYMENT,
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
     api_key=AZURE_OPENAI_API_KEY,
-    base_url=AZURE_OPENAI_ENDPOINT,
-    api_type="azure",
-    api_version=AZURE_OPENAI_API_VERSION
 )
 
 
 # ---------------------------------------------------------
-# Vectorstore factory
+# AZURE SEARCH CLIENT
 # ---------------------------------------------------------
-def get_vectorstore() -> AzureSearch:
-    vs = AzureSearch(
-        azure_search_endpoint=AZURE_SEARCH_ENDPOINT,
-        azure_search_key=AZURE_SEARCH_ADMIN_KEY,
-        index_name=AZURE_SEARCH_INDEX_NAME,
-        embedding_function=embeddings.embed_query,
-    )
-    return vs
+search_client = SearchClient(
+    endpoint=AZURE_SEARCH_ENDPOINT,
+    index_name=AZURE_SEARCH_INDEX,
+    credential=AZURE_SEARCH_KEY
+)
 
 
 # ---------------------------------------------------------
-# Utilities: loading, chunking, creating Document objects
+# UPLOAD TO BLOB + INDEXING
 # ---------------------------------------------------------
-def load_file_to_chunks(file_obj, filename: str):
-    """
-    Load a file-like object to langchain Document chunks (langchain Document instances)
-    """
-    ext = filename.lower().split(".")[-1]
-    tmp_path = None
-    # Some loaders accept a path, so write file to a temp path first
-    with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
-        tmp.write(file_obj.getbuffer())
-        tmp_path = tmp.name
+def upload_pdf_to_blob(pdf_file):
+    try:
+        blob_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION)
+        container = blob_client.get_container_client(AZURE_STORAGE_CONTAINER)
 
-    if ext == "pdf":
-        loader = PyPDFLoader(tmp_path)
-    elif ext in ("txt", "text"):
-        loader = TextLoader(tmp_path)
-    elif ext in ("docx", "doc"):
-        loader = UnstructuredFileLoader(tmp_path)
-    else:
-        raise ValueError("Unsupported file type")
+        blob_name = f"{uuid.uuid4()}-{pdf_file.name}"
+        container.upload_blob(blob_name, pdf_file.read(), overwrite=True)
 
-    docs = loader.load()
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=50)
-    chunks = splitter.split_documents(docs)
+        return blob_name
+    except Exception as e:
+        st.error(f"Blob upload failed: {e}")
+        return None
 
-    # sanitize metadata and ensure Document objects
-    out_chunks: List[Document] = []
-    for c in chunks:
-        meta = c.metadata or {}
-        clean_meta = {
-            "metadata_storage_name": meta.get("metadata_storage_name", filename),
-            "page": int(meta.get("page", 0)) if meta.get("page", 0) is not None else 0,
-            "source": meta.get("source", filename),
+
+# ---------------------------------------------------------
+# VECTOR RETRIEVAL (using new SDK)
+# ---------------------------------------------------------
+def retrieve_top_chunks(query: str, k: int = 5):
+    try:
+        query_vector = embedder.embed_query(query)
+
+        results = search_client.search(
+            search_text=None,
+            vector_queries=[
+                VectorQuery(
+                    vector=query_vector,
+                    k_nearest_neighbors=k,
+                    fields="contentVector"
+                )
+            ],
+            select=["content", "source", "chunk_id"]
+        )
+
+        docs = []
+        for result in results:
+            docs.append({
+                "content": result["content"],
+                "source": result.get("source", "Unknown"),
+                "chunk_id": result.get("chunk_id", "")
+            })
+
+        return docs
+
+    except Exception as e:
+        st.error(f"Retrieval failed: {e}")
+        return []
+
+
+# ---------------------------------------------------------
+# LLM ANSWERING
+# ---------------------------------------------------------
+def answer_query(user_query, chunks):
+
+    # Combine chunk text
+    combined_context = "\n\n".join([c["content"] for c in chunks])
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a helpful assistant. Answer only from the provided context. "
+                "If not in context, say you don't know."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Context:\n{combined_context}\n\nQuestion: {user_query}"
         }
-        doc_obj = Document(page_content=c.page_content, metadata=clean_meta)
-        out_chunks.append(doc_obj)
-
-    return out_chunks
-
-
-# ---------------------------------------------------------
-# Dedupe function to remove near-exact duplicate chunks (by text)
-# ---------------------------------------------------------
-def dedupe_docs(docs: List) -> List:
-    seen = set()
-    unique = []
-    for d in docs:
-        text = d.page_content.strip() if hasattr(d, "page_content") else (d.get("page_content") or "").strip()
-        if text and text not in seen:
-            seen.add(text)
-            unique.append(d)
-    return unique
-
-
-# ---------------------------------------------------------
-# Robust retriever invocation (supports different retriever APIs)
-# ---------------------------------------------------------
-def call_retriever(retriever, query: str, k: int = 5):
-    # attempt invoke (new style)
-    try:
-        if hasattr(retriever, "invoke"):
-            try:
-                res = retriever.invoke({"query": query, "k": k})
-            except TypeError:
-                # some retrievers accept plain string
-                res = retriever.invoke(query)
-            return list(res or [])[:k]
-    except Exception:
-        pass
-
-    # try older api
-    try:
-        if hasattr(retriever, "get_relevant_documents"):
-            try:
-                return retriever.get_relevant_documents(query)[:k]
-            except TypeError:
-                return retriever.get_relevant_documents(query, k=k)[:k]
-    except Exception:
-        pass
-
-    raise RuntimeError("Retriever does not support known methods (invoke/get_relevant_documents).")
-
-
-# ---------------------------------------------------------
-# Upload -> index pipeline
-# ---------------------------------------------------------
-def upload_file_and_index(file_obj):
-    filename = file_obj.name
-    # upload to blob storage
-    try:
-        blob_container_client.upload_blob(name=filename, data=file_obj, overwrite=True)
-    except Exception as e:
-        st.error(f"Failed to upload to blob: {e}")
-        return False
-
-    # create chunks
-    try:
-        chunks = load_file_to_chunks(file_obj, filename)
-    except Exception as e:
-        st.error(f"Failed to load/chunk file: {e}")
-        return False
-
-    # index into vectorstore (Document objects required)
-    try:
-        vs = get_vectorstore()
-        vs.add_documents(chunks)
-    except Exception as e:
-        st.error(f"Indexing failed: {e}")
-        return False
-
-    # store metadata in session user history
-    user = st.session_state.get("user_id")
-    if user:
-        st.session_state["users"].setdefault(user, {"history": [], "uploads": []})
-        st.session_state["users"][user]["uploads"].append(filename)
-        st.session_state["users"][user]["history"].append(f"Uploaded {filename}")
-
-    return True
-
-
-# ---------------------------------------------------------
-# Generation: build context from retrieved docs and call Azure OpenAI (OpenAI client 1.x)
-# ---------------------------------------------------------
-def generate_answer_from_docs(question: str, docs: List[Document]) -> str:
-    # build context
-    combined = ""
-    for i, d in enumerate(docs, start=1):
-        # include source short metadata
-        meta = getattr(d, "metadata", {}) or {}
-        src = meta.get("metadata_storage_name", meta.get("source", f"doc_{i}"))
-        combined += f"---\nSource: {src}\n{d.page_content}\n\n"
-
-    system = {
-        "role": "system",
-        "content": "You are a helpful assistant. Answer the user's question using ONLY the provided context. "
-                   "If the answer is not contained in the context, say you don't know."
-    }
-    user = {
-        "role": "user",
-        "content": f"Context:\n{combined}\n\nQuestion: {question}\n\nAnswer concisely and cite sources from the context."
-    }
+    ]
 
     try:
-        resp = openai_client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT_NAME,
-            messages=[system, user],
-            max_tokens=500,
+        completion = openai_client.chat.completions.create(
+            model=AZURE_OPENAI_DEPLOYMENT,
+            messages=messages,
+            max_tokens=400,
             temperature=0
         )
-        return resp.choices[0].message.content.strip()
+
+        return completion.choices[0].message.content
+
     except Exception as e:
-        raise RuntimeError(f"Generation failed: {e}")
+        st.error(f"Generation failed: {e}")
+        return None
 
 
 # ---------------------------------------------------------
-# UI layout
+# REMOVE DUPLICATES
 # ---------------------------------------------------------
-st.set_page_config(page_title="SmartAssistantApp", layout="wide")
-st.title("🤖 SmartAssistantApp (Role-based, per-user sessions)")
+def dedupe_chunks(chunks):
+    seen = set()
+    deduped = []
 
-# authentication
-if not st.session_state.get("logged_in", False):
-    login_box()
-    st.stop()
+    for c in chunks:
+        text = c["content"].strip()
+        if text not in seen:
+            deduped.append(c)
+            seen.add(text)
 
-# logged-in UI
-user = st.session_state["user_id"]
-role = st.session_state.get("role", "user")
+    return deduped
 
-with st.sidebar:
-    st.write(f"Signed in as: **{user}** ({role})")
-    if st.button("Logout"):
-        logout()
-    if st.button("Clear my UI session"):
-        clear_user_ui()
 
-# Upload area
-st.header("Upload document (PDF / TXT / DOCX)")
-uploaded = st.file_uploader("Select file", type=["pdf", "txt", "docx"])
-if uploaded:
-    st.info(f"Uploading & indexing {uploaded.name} ...")
-    ok = upload_file_and_index(uploaded)
-    if ok:
-        st.success("Upload + index complete.")
+# ---------------------------------------------------------
+# MAIN UI
+# ---------------------------------------------------------
+st.title("🧠 SmartAssistant – RAG over Azure Search & OpenAI")
+st.caption(f"Logged in as: **{st.session_state['user']}**")
+
+# Feature 1 – CLEAR BUTTON
+if st.button("🧹 Clear Conversation"):
+    st.session_state["chat_history"] = []
+    st.success("Chat cleared!")
+    st.experimental_rerun()
+
+# Upload PDF
+uploaded_pdf = st.file_uploader("Upload PDF", type=["pdf"])
+
+if uploaded_pdf:
+    blob_name = upload_pdf_to_blob(uploaded_pdf)
+    if blob_name:
+        st.success(f"Uploaded {uploaded_pdf.name} to blob: {blob_name}")
+
+st.divider()
+
+# Query Section
+user_query = st.text_input("Ask a question about your uploaded documents:")
+
+if st.button("Run Query"):
+    if not user_query.strip():
+        st.error("Enter a question.")
     else:
-        st.error("Upload/index failed (see messages above).")
+        with st.spinner("Retrieving and generating answer..."):
 
-# Query area
-st.header("Ask a question")
-question = st.text_input("Enter your question here:")
+            results = retrieve_top_chunks(user_query, k=5)
+            results = dedupe_chunks(results)
 
-if st.button("Ask"):
-    if not question.strip():
-        st.warning("Please enter a question.")
-    else:
-        # build retriever and call robust helper
-        try:
-            vs = get_vectorstore()
-            retriever = vs.as_retriever(search_kwargs={"k": 8})
-            docs = call_retriever(retriever, question, k=8)
-            docs = dedupe_docs(docs)
-            docs = docs[:3]  # keep top 3 unique chunks
-        except Exception as e:
-            st.error(f"Retrieval failed: {e}")
-            docs = []
+            if not results:
+                st.error("No relevant chunks found.")
+            else:
+                answer = answer_query(user_query, results)
 
-        if not docs:
-            st.warning("No relevant documents found.")
-        else:
-            try:
-                answer = generate_answer_from_docs(question, docs)
-                st.subheader("Answer")
-                st.write(answer)
-                st.subheader("Sources")
-                for i, d in enumerate(docs, 1):
-                    meta = getattr(d, "metadata", {}) or {}
-                    src = meta.get("metadata_storage_name", meta.get("source", f"doc_{i}"))
-                    st.markdown(f"**Source {i}:** {src}")
-                    st.write(d.page_content[:1000])
-                    st.markdown("---")
-
-                # store history for this user
-                st.session_state["users"].setdefault(user, {"history": [], "uploads": []})
-                st.session_state["users"][user]["history"].append(f"Q: {question} -> A preview: {answer[:120]}...")
-                st.session_state["last_answer"] = answer
-                st.session_state["last_docs"] = docs
-            except Exception as e:
-                st.error(f"Generation failed: {e}")
+                if answer:
+                    # Record chat per user
+                    st.session_state["chat_history"].append({
+                        "q": user_query,
+                        "a": answer,
+                        "chunks": results
+                    })
 
 
-# Show user history (private)
-st.header("Your session history (private)")
-for item in st.session_state["users"].get(user, {}).get("history", []):
-    st.write("- ", item)
+# ---------------------------------------------------------
+# SHOW CHAT HISTORY FOR THIS USER ONLY
+# ---------------------------------------------------------
+st.subheader("📝 Conversation History")
+
+for item in st.session_state["chat_history"]:
+    st.markdown(f"**You:** {item['q']}")
+    st.markdown(f"**Assistant:** {item['a']}")
+    with st.expander("📄 Source Chunks"):
+        for c in item["chunks"]:
+            st.write(f"**Source:** {c['source']}")
+            st.write(c["content"])
+            st.markdown("---")
