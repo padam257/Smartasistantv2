@@ -77,7 +77,7 @@ def login():
             st.session_state["role"] = users[username]["role"]
             st.session_state["chat_history"] = []
             st.success(f"Login successful! Welcome, {username}")
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.error("Invalid username or password")
 
@@ -245,7 +245,7 @@ st.caption(f"Logged in as: **{st.session_state['user']}** (Role: {st.session_sta
 if st.button("🧹 Clear Conversation"):
     st.session_state["chat_history"] = []
     st.success("Chat cleared!")
-    st.experimental_rerun()
+    st.rerun()
 
 
 # ---------------------------------------------------------
@@ -304,3 +304,4 @@ for item in st.session_state["chat_history"]:
             st.write(f"**Source:** {c['source']}")
             st.write(c["content"])
             st.markdown("---")
+
