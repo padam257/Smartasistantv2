@@ -19,13 +19,11 @@ from openai import AzureOpenAI
 # SAFE SECRET LOADING
 # ---------------------------------------------------------
 def get_secret(key: str):
-    # Attempt Streamlit secrets only if available AND safe
     try:
         if hasattr(st, "secrets") and st.secrets and key in st.secrets:
             return st.secrets[key]
     except Exception:
         pass
-    # Fallback to environment variables
     return os.environ.get(key)
 
 
@@ -33,15 +31,39 @@ def get_secret(key: str):
 # PAGE CONFIG
 # ---------------------------------------------------------
 st.set_page_config(page_title="SmartAssistant App", layout="wide")
-
 load_dotenv()
 
 
 # ---------------------------------------------------------
-# AUTHENTICATION (simple username/password)
+# MULTI-USER AUTHENTICATION
 # ---------------------------------------------------------
+def load_users():
+    """
+    Users loaded from environment variables:
+      USER_1_USERNAME, USER_1_PASSWORD, USER_1_ROLE
+      USER_2_USERNAME, USER_2_PASSWORD, USER_2_ROLE
+      ...
+    """
+    users = {}
+
+    for i in range(1, 25):  # support up to 24 users
+        uname = get_secret(f"USER_{i}_USERNAME")
+        pwd = get_secret(f"USER_{i}_PASSWORD")
+        role = get_secret(f"USER_{i}_ROLE")
+
+        if uname and pwd:
+            users[uname] = {
+                "password": pwd,
+                "role": role if role else "reader"
+            }
+
+    return users
+
+
 def login():
     st.title("🔐 SmartAssistant Login")
+
+    users = load_users()
 
     with st.form("login_form"):
         username = st.text_input("Username")
@@ -49,11 +71,12 @@ def login():
         submitted = st.form_submit_button("Login")
 
     if submitted:
-        if username == get_secret("ADMIN_USERNAME") and password == get_secret("ADMIN_PASSWORD"):
+        if username in users and password == users[username]["password"]:
             st.session_state["authenticated"] = True
             st.session_state["user"] = username
-            st.session_state["chat_history"] = []     # User-specific chat history
-            st.success("Login successful!")
+            st.session_state["role"] = users[username]["role"]
+            st.session_state["chat_history"] = []
+            st.success(f"Login successful! Welcome, {username}")
             st.experimental_rerun()
         else:
             st.error("Invalid username or password")
@@ -111,7 +134,7 @@ search_client = SearchClient(
 
 
 # ---------------------------------------------------------
-# UPLOAD TO BLOB + INDEXING
+# UPLOAD PDF TO BLOB
 # ---------------------------------------------------------
 def upload_pdf_to_blob(pdf_file):
     try:
@@ -128,7 +151,7 @@ def upload_pdf_to_blob(pdf_file):
 
 
 # ---------------------------------------------------------
-# VECTOR RETRIEVAL (using new SDK)
+# VECTOR RETRIEVAL
 # ---------------------------------------------------------
 def retrieve_top_chunks(query: str, k: int = 5):
     try:
@@ -165,8 +188,6 @@ def retrieve_top_chunks(query: str, k: int = 5):
 # LLM ANSWERING
 # ---------------------------------------------------------
 def answer_query(user_query, chunks):
-
-    # Combine chunk text
     combined_context = "\n\n".join([c["content"] for c in chunks])
 
     messages = [
@@ -218,26 +239,35 @@ def dedupe_chunks(chunks):
 # MAIN UI
 # ---------------------------------------------------------
 st.title("🧠 SmartAssistant – RAG over Azure Search & OpenAI")
-st.caption(f"Logged in as: **{st.session_state['user']}**")
+st.caption(f"Logged in as: **{st.session_state['user']}** (Role: {st.session_state['role']})")
 
-# Feature 1 – CLEAR BUTTON
+# Feature: CLEAR BUTTON
 if st.button("🧹 Clear Conversation"):
     st.session_state["chat_history"] = []
     st.success("Chat cleared!")
     st.experimental_rerun()
 
-# Upload PDF
-uploaded_pdf = st.file_uploader("Upload PDF", type=["pdf"])
 
-if uploaded_pdf:
-    blob_name = upload_pdf_to_blob(uploaded_pdf)
-    if blob_name:
-        st.success(f"Uploaded {uploaded_pdf.name} to blob: {blob_name}")
+# ---------------------------------------------------------
+# UPLOAD PDF (admin + editor only)
+# ---------------------------------------------------------
+if st.session_state["role"] in ["admin", "editor"]:
+    uploaded_pdf = st.file_uploader("Upload PDF", type=["pdf"])
+    if uploaded_pdf:
+        blob_name = upload_pdf_to_blob(uploaded_pdf)
+        if blob_name:
+            st.success(f"Uploaded {uploaded_pdf.name} to blob: {blob_name}")
+else:
+    st.info("📘 You are a reader. Upload access disabled.")
+
 
 st.divider()
 
-# Query Section
-user_query = st.text_input("Ask a question about your uploaded documents:")
+
+# ---------------------------------------------------------
+# QUERY SECTION
+# ---------------------------------------------------------
+user_query = st.text_input("Ask a question:")
 
 if st.button("Run Query"):
     if not user_query.strip():
@@ -254,7 +284,6 @@ if st.button("Run Query"):
                 answer = answer_query(user_query, results)
 
                 if answer:
-                    # Record chat per user
                     st.session_state["chat_history"].append({
                         "q": user_query,
                         "a": answer,
@@ -263,7 +292,7 @@ if st.button("Run Query"):
 
 
 # ---------------------------------------------------------
-# SHOW CHAT HISTORY FOR THIS USER ONLY
+# SHOW CHAT HISTORY (per user)
 # ---------------------------------------------------------
 st.subheader("📝 Conversation History")
 
