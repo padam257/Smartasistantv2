@@ -239,9 +239,9 @@ def index_documents_to_azure_search(docs) -> (bool, Any):
             # use 'metadata' field in your index to store filename/source
             "metadata": blob_identifier,
             # minimal storage metadata to avoid failing if fields exist; if they don't, Search ignores unknown fields on upload
-            "metadata_storage_size": len(d.page_content),
-            "metadata_storage_path": f"blob://{blob_identifier}",
-            "metadata_storage_last_modified": datetime.utcnow().isoformat() + "Z",
+            #"metadata_storage_size": len(d.page_content),
+            #"metadata_storage_path": f"blob://{blob_identifier}",
+            #"metadata_storage_last_modified": datetime.utcnow().isoformat() + "Z",
         }
         azure_docs.append(azure_doc)
 
@@ -416,5 +416,6 @@ st.subheader("Your session history (private)")
 for h in st.session_state["users_history"][USER]["history"]:
     st.write("- ", h)
 # EOF
+
 
 
