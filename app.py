@@ -2,7 +2,6 @@
 import os
 import uuid
 import streamlit as st
-from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from azure.storage.blob import BlobServiceClient
@@ -11,7 +10,6 @@ from azure.search.documents.models import VectorQuery
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import AzureOpenAIEmbeddings
-
 from openai import AzureOpenAI
 
 
@@ -38,31 +36,18 @@ load_dotenv()
 # MULTI-USER AUTHENTICATION
 # ---------------------------------------------------------
 def load_users():
-    """
-    Users loaded from environment variables:
-      USER_1_USERNAME, USER_1_PASSWORD, USER_1_ROLE
-      USER_2_USERNAME, USER_2_PASSWORD, USER_2_ROLE
-      ...
-    """
     users = {}
-
-    for i in range(1, 25):  # support up to 24 users
+    for i in range(1, 25):
         uname = get_secret(f"USER_{i}_USERNAME")
         pwd = get_secret(f"USER_{i}_PASSWORD")
         role = get_secret(f"USER_{i}_ROLE")
-
         if uname and pwd:
-            users[uname] = {
-                "password": pwd,
-                "role": role if role else "reader"
-            }
-
+            users[uname] = {"password": pwd, "role": role or "reader"}
     return users
 
 
 def login():
     st.title("🔐 SmartAssistant Login")
-
     users = load_users()
 
     with st.form("login_form"):
@@ -76,7 +61,7 @@ def login():
             st.session_state["user"] = username
             st.session_state["role"] = users[username]["role"]
             st.session_state["chat_history"] = []
-            st.success(f"Login successful! Welcome, {username}")
+            st.success("Login successful!")
             st.rerun()
         else:
             st.error("Invalid username or password")
@@ -138,11 +123,11 @@ search_client = SearchClient(
 # ---------------------------------------------------------
 def upload_pdf_to_blob(pdf_file):
     try:
-        blob_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION)
-        container = blob_client.get_container_client(AZURE_STORAGE_CONTAINER)
+        blob_service = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION)
+        container_client = blob_service.get_container_client(AZURE_STORAGE_CONTAINER)
 
         blob_name = f"{uuid.uuid4()}-{pdf_file.name}"
-        container.upload_blob(blob_name, pdf_file.read(), overwrite=True)
+        container_client.upload_blob(blob_name, pdf_file.read(), overwrite=True)
 
         return blob_name
     except Exception as e:
@@ -163,18 +148,18 @@ def retrieve_top_chunks(query: str, k: int = 5):
                 VectorQuery(
                     vector=query_vector,
                     k_nearest_neighbors=k,
-                    fields="contentVector"
+                    fields="content_vector"
                 )
             ],
-            select=["content", "source", "chunk_id"]
+            select=["id", "content", "metadata", "page"]
         )
 
         docs = []
-        for result in results:
+        for r in results:
             docs.append({
-                "content": result["content"],
-                "source": result.get("source", "Unknown"),
-                "chunk_id": result.get("chunk_id", "")
+                "content": r["content"],
+                "source": r.get("metadata", "Unknown"),
+                "page": r.get("page", None)
             })
 
         return docs
@@ -188,20 +173,17 @@ def retrieve_top_chunks(query: str, k: int = 5):
 # LLM ANSWERING
 # ---------------------------------------------------------
 def answer_query(user_query, chunks):
-    combined_context = "\n\n".join([c["content"] for c in chunks])
+    context = "\n\n".join([c["content"] for c in chunks])
 
     messages = [
         {
             "role": "system",
             "content": (
-                "You are a helpful assistant. Answer only from the provided context. "
-                "If not in context, say you don't know."
+                "You are a helpful assistant. Answer only using the provided context. "
+                "If not found, say you don't know."
             ),
         },
-        {
-            "role": "user",
-            "content": f"Context:\n{combined_context}\n\nQuestion: {user_query}"
-        }
+        {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {user_query}"}
     ]
 
     try:
@@ -209,7 +191,7 @@ def answer_query(user_query, chunks):
             model=AZURE_OPENAI_DEPLOYMENT,
             messages=messages,
             max_tokens=400,
-            temperature=0
+            temperature=0,
         )
 
         return completion.choices[0].message.content
@@ -224,15 +206,13 @@ def answer_query(user_query, chunks):
 # ---------------------------------------------------------
 def dedupe_chunks(chunks):
     seen = set()
-    deduped = []
-
+    output = []
     for c in chunks:
         text = c["content"].strip()
         if text not in seen:
-            deduped.append(c)
+            output.append(c)
             seen.add(text)
-
-    return deduped
+    return output
 
 
 # ---------------------------------------------------------
@@ -241,7 +221,6 @@ def dedupe_chunks(chunks):
 st.title("🧠 SmartAssistant – RAG over Azure Search & OpenAI")
 st.caption(f"Logged in as: **{st.session_state['user']}** (Role: {st.session_state['role']})")
 
-# Feature: CLEAR BUTTON
 if st.button("🧹 Clear Conversation"):
     st.session_state["chat_history"] = []
     st.success("Chat cleared!")
@@ -249,16 +228,16 @@ if st.button("🧹 Clear Conversation"):
 
 
 # ---------------------------------------------------------
-# UPLOAD PDF (admin + editor only)
+# UPLOAD PDF (admin + editor allowed)
 # ---------------------------------------------------------
 if st.session_state["role"] in ["admin", "editor"]:
     uploaded_pdf = st.file_uploader("Upload PDF", type=["pdf"])
     if uploaded_pdf:
         blob_name = upload_pdf_to_blob(uploaded_pdf)
         if blob_name:
-            st.success(f"Uploaded {uploaded_pdf.name} to blob: {blob_name}")
+            st.success(f"Uploaded: {uploaded_pdf.name}")
 else:
-    st.info("📘 You are a reader. Upload access disabled.")
+    st.info("📘 Reader role: Upload disabled")
 
 
 st.divider()
@@ -271,18 +250,16 @@ user_query = st.text_input("Ask a question:")
 
 if st.button("Run Query"):
     if not user_query.strip():
-        st.error("Enter a question.")
+        st.error("Enter a valid question.")
     else:
         with st.spinner("Retrieving and generating answer..."):
-
-            results = retrieve_top_chunks(user_query, k=5)
+            results = retrieve_top_chunks(user_query)
             results = dedupe_chunks(results)
 
             if not results:
-                st.error("No relevant chunks found.")
+                st.warning("No relevant chunks found.")
             else:
                 answer = answer_query(user_query, results)
-
                 if answer:
                     st.session_state["chat_history"].append({
                         "q": user_query,
@@ -292,16 +269,9 @@ if st.button("Run Query"):
 
 
 # ---------------------------------------------------------
-# SHOW CHAT HISTORY (per user)
+# SHOW CHAT HISTORY
 # ---------------------------------------------------------
 st.subheader("📝 Conversation History")
 
 for item in st.session_state["chat_history"]:
-    st.markdown(f"**You:** {item['q']}")
-    st.markdown(f"**Assistant:** {item['a']}")
-    with st.expander("📄 Source Chunks"):
-        for c in item["chunks"]:
-            st.write(f"**Source:** {c['source']}")
-            st.write(c["content"])
-            st.markdown("---")
-
+    st.markdown(f"**You:**
