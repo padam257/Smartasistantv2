@@ -415,5 +415,5 @@ if st.button("Run Query"):
 st.subheader("Your session history (private)")
 for h in st.session_state["users_history"][USER]["history"]:
     st.write("- ", h)
-
 # EOF
+
