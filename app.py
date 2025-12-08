@@ -303,36 +303,39 @@ def upload_and_index_pdf(uploaded_file) -> bool:
     return True
 
 # -------------------------
-# Retrieval: vector query (kind="vector" required)
-# -------------------------
-def retrieve_top_chunks(query: str, k: int = 5):
-    try:
-        qvec = embedder.embed_query(query)
-    except Exception as e:
-        st.error(f"Query embedding failed: {e}")
-        return []
+def retrieve_top_chunks(query, k=5):
+    # 1. Embed user query
+    embedded = embeddings.embed_query(query)
 
-    try:
-        vq = VectorQuery(kind="vector", vector=qvec, k_nearest_neighbors=k, fields="content_vector")
-        results = search_client.search(
-            search_text=None,
-            vector_queries=[vq],
-            select=["id", "content", "metadata", "page"],
-            top=k
-        )
-    except Exception as e:
-        st.error(f"Azure Search query failed: {e}")
-        return []
+    # 2. Azure Search vector query
+    search_payload = {
+        "vectorQueries": [
+            {
+                "kind": "vector",                   # REQUIRED
+                "vector": embedded,                # actual vector
+                "fields": "content_vector",        # field name in index
+                "k": k                              # number of neighbors
+            }
+        ],
+        "top": k
+    }
 
-    docs = []
+    # 3. Execute search
+    results = search_client.search(
+        search_text=None,          # must be None when using vectorQueries
+        **search_payload
+    )
+
+    # 4. Return formatted results
+    final_results = []
     for r in results:
-        docs.append({
-            "id": r.get("id"),
-            "content": r.get("content", ""),
-            "source": r.get("metadata", "unknown"),
+        final_results.append({
+            "content": r["content"],
+            "metadata": r.get("metadata", ""),
             "page": r.get("page", 0)
         })
-    return docs
+
+    return final_results
 
 # -------------------------
 # Deduplicate exact duplicate chunks
@@ -423,6 +426,7 @@ for h in history:
     st.write("- ", h)
 
 # EOF
+
 
 
 
