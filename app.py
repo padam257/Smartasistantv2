@@ -303,39 +303,75 @@ def upload_and_index_pdf(uploaded_file) -> bool:
     return True
 
 # -------------------------
-def retrieve_top_chunks(query, k=5):
-    # 1. Embed user query
-    embedded = embeddings.embed_query(query)
+def retrieve_top_chunks(query: str, k: int = 5):
+    """
+    Returns list[dict] with keys: id, content, source (metadata), page
+    Uses embedder (langchain wrapper) primarily; falls back to openai_client.embeddings.
+    Executes vector search using VectorQuery(kind='vector', ...).
+    """
+    # 1) get embedding for the query
+    try:
+        # Primary: use langchain_openai AzureOpenAIEmbeddings wrapper you created as `embedder`
+        qvec = None
+        try:
+            qvec = embedder.embed_query(query)
+        except Exception as e_embedder:
+            # fallback: use openai_client.embeddings.create (AzureOpenAI)
+            try:
+                resp = openai_client.embeddings.create(
+                    model=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
+                    input=query
+                )
+                qvec = resp["data"][0]["embedding"]
+            except Exception as e_openai:
+                st.error(f"Embedding failed (embedder & openai fallback): {e_embedder} / {e_openai}")
+                return []
+        # ensure qvec is a plain list of floats
+        if not qvec:
+            st.error("Embedding returned empty vector.")
+            return []
+    except Exception as e:
+        st.error(f"Query embedding failure: {e}")
+        return []
 
-    # 2. Azure Search vector query
-    search_payload = {
-        "vectorQueries": [
-            {
-                "kind": "vector",                   # REQUIRED
-                "vector": embedded,                # actual vector
-                "fields": "content_vector",        # field name in index
-                "k": k                              # number of neighbors
-            }
-        ],
-        "top": k
-    }
+    # 2) build VectorQuery with required `kind="vector"`
+    try:
+        vq = VectorQuery(
+            kind="vector",                      # REQUIRED
+            vector=qvec,
+            k_nearest_neighbors=k,
+            fields="content_vector"             # must match your index
+        )
+    except Exception as e:
+        st.error(f"Failed to build VectorQuery: {e}")
+        return []
 
-    # 3. Execute search
-    results = search_client.search(
-        search_text=None,          # must be None when using vectorQueries
-        **search_payload
-    )
+    # 3) call Azure Search
+    try:
+        results = search_client.search(
+            search_text=None,                   # must be None when using pure vector query
+            vector_queries=[vq],
+            select=["id", "content", "metadata", "page"],
+            top=k
+        )
+    except Exception as e:
+        st.error(f"Azure Search query failed: {e}")
+        return []
 
-    # 4. Return formatted results
-    final_results = []
-    for r in results:
-        final_results.append({
-            "content": r["content"],
-            "metadata": r.get("metadata", ""),
-            "page": r.get("page", 0)
-        })
-
-    return final_results
+    # 4) iterate results and return
+    docs = []
+    try:
+        for r in results:
+            docs.append({
+                "id": r.get("id"),
+                "content": r.get("content", ""),
+                "source": r.get("metadata", "unknown"),
+                "page": r.get("page", None)
+            })
+    except Exception as e:
+        st.error(f"Failed while processing search results: {e}")
+        return []
+    return docs
 
 # -------------------------
 # Deduplicate exact duplicate chunks
@@ -426,6 +462,7 @@ for h in history:
     st.write("- ", h)
 
 # EOF
+
 
 
 
