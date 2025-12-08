@@ -274,4 +274,12 @@ if st.button("Run Query"):
 st.subheader("📝 Conversation History")
 
 for item in st.session_state["chat_history"]:
-    st.markdown(f"**You:**
+    st.markdown(f"**You:** {item['q']}")
+    st.markdown(f"**Assistant:** {item['a']}")
+    with st.expander("📄 Source Chunks"):
+        for c in item["chunks"]:
+            st.write(f"**Source (metadata):** {c['source']}")
+            st.write(f"**Page:** {c['page']}")
+            st.write(c["content"])
+            st.markdown("---")
+
