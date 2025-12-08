@@ -9,69 +9,26 @@
 # - Uses Azure OpenAI embeddings (deployment set in AZURE_OPENAI_EMBEDDING_DEPLOYMENT)
 # - Uses Azure OpenAI chat deployment (AZURE_OPENAI_DEPLOYMENT_NAME) for generation
 
-# app.py
-"""
-Final production-ready SmartAssistant (Streamlit)
-- Matches Azure Search index fields exactly:
-    id (String key)
-    content (String)
-    content_vector (SingleCollection, 1536)
-    metadata (String)
-    page (Int32)
-
-- Requirements (env/App Service settings):
-    AZURE_OPENAI_ENDPOINT
-    AZURE_OPENAI_API_KEY
-    AZURE_OPENAI_DEPLOYMENT_NAME           -> gpt-4o (chat/completion deployment)
-    AZURE_OPENAI_API_VERSION               -> e.g. 2024-02-15-preview
-    AZURE_OPENAI_EMBEDDING_DEPLOYMENT      -> text-embedding-ada-002 (embedding deployment)
-    AZURE_SEARCH_ENDPOINT
-    AZURE_SEARCH_KEY
-    AZURE_SEARCH_INDEX
-    AZURE_STORAGE_CONNECTION_STRING
-    AZURE_STORAGE_CONTAINER
-    USER_1_USERNAME / USER_1_PASSWORD / USER_1_ROLE ... (up to USER_24_*)
-"""
-
+# app.py - SmartAssistant (REST vector search, no LangChain retrieval)
 import os
 import uuid
+import json
 import tempfile
+import requests
 import streamlit as st
 from typing import List, Dict, Any
 from datetime import datetime
-
+from pypdf import PdfReader
 from dotenv import load_dotenv
 
-# Azure SDK
-from azure.core.credentials import AzureKeyCredential
-from azure.storage.blob import BlobServiceClient
-from azure.search.documents import SearchClient
-from azure.search.documents.models import VectorQuery
-
-# OpenAI (Azure) client
+# OpenAI Azure client (wrap)
 from openai import AzureOpenAI
 
-# LangChain wrappers
-from langchain_openai import AzureOpenAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-# PDF text extraction
-from pypdf import PdfReader
-
-# Optional: support Document type from langchain if available
-try:
-    from langchain_core.documents import Document as LC_Document
-except Exception:
-    try:
-        from langchain.schema import Document as LC_Document
-    except Exception:
-        LC_Document = None  # fallback to dicts
-
-# Load local .env for local dev
+# Load .env locally if present
 load_dotenv()
 
 # -------------------------
-# helper to read secrets (Streamlit secrets or env)
+# Helper: get secret (Streamlit secrets or env)
 # -------------------------
 def get_secret(key: str) -> str:
     try:
@@ -81,7 +38,6 @@ def get_secret(key: str) -> str:
         pass
     return os.environ.get(key)
 
-
 # -------------------------
 # Required environment variables (validate early)
 # -------------------------
@@ -89,11 +45,11 @@ st.set_page_config(page_title="SmartAssistant", layout="wide")
 
 AZURE_OPENAI_ENDPOINT = get_secret("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_API_KEY = get_secret("AZURE_OPENAI_API_KEY")
-AZURE_OPENAI_DEPLOYMENT_NAME = get_secret("AZURE_OPENAI_DEPLOYMENT_NAME")  # gpt-4o (chat)
+AZURE_OPENAI_DEPLOYMENT_NAME = get_secret("AZURE_OPENAI_DEPLOYMENT_NAME")  # chat deployment (gpt-4o)
 AZURE_OPENAI_API_VERSION = get_secret("AZURE_OPENAI_API_VERSION") or get_secret("OPENAI_API_VERSION")
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT = get_secret("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")  # text-embedding-ada-002
 
-AZURE_SEARCH_ENDPOINT = get_secret("AZURE_SEARCH_ENDPOINT")
+AZURE_SEARCH_ENDPOINT = get_secret("AZURE_SEARCH_ENDPOINT")  # e.g. https://<service>.search.windows.net
 AZURE_SEARCH_KEY = get_secret("AZURE_SEARCH_KEY")
 AZURE_SEARCH_INDEX = get_secret("AZURE_SEARCH_INDEX")
 
@@ -119,31 +75,301 @@ if _missing:
     st.stop()
 
 # -------------------------
-# Multi-user loader from env (USER_1..USER_24)
+# Initialize Azure OpenAI client (Azure wrapper)
 # -------------------------
-def load_users() -> Dict[str, Dict[str, str]]:
-    users = {}
-    for i in range(1, 25):
-        uname = get_secret(f"USER_{i}_USERNAME")
-        pwd = get_secret(f"USER_{i}_PASSWORD")
-        role = get_secret(f"USER_{i}_ROLE")
-        if uname and pwd:
-            users[uname] = {"password": pwd, "role": role or "reader"}
-    return users
+openai_client = AzureOpenAI(
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+    api_key=AZURE_OPENAI_API_KEY,
+    api_version=AZURE_OPENAI_API_VERSION,
+)
 
+# -------------------------
+# Simple text splitter (no LangChain)
+# -------------------------
+def split_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
+    if not text:
+        return []
+    chunks = []
+    start = 0
+    length = len(text)
+    while start < length:
+        end = start + chunk_size
+        chunk = text[start:end]
+        chunks.append(chunk.strip())
+        start = end - overlap
+        if start < 0:
+            start = 0
+    return [c for c in chunks if c]
 
+# -------------------------
+# PDF extraction
+# -------------------------
+def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> List[str]:
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp.write(pdf_bytes)
+        tmp.flush()
+        tmp_path = tmp.name
+    reader = PdfReader(tmp_path)
+    pages = []
+    for p in reader.pages:
+        try:
+            pages.append(p.extract_text() or "")
+        except Exception:
+            pages.append("")
+    return pages
+
+# -------------------------
+# Azure Search REST helpers
+# -------------------------
+API_VERSION = "2025-09-01"
+
+def docs_index_url() -> str:
+    return f"{AZURE_SEARCH_ENDPOINT.rstrip('/')}/indexes/{AZURE_SEARCH_INDEX}/docs/index?api-version={API_VERSION}"
+
+def docs_search_url() -> str:
+    return f"{AZURE_SEARCH_ENDPOINT.rstrip('/')}/indexes/{AZURE_SEARCH_INDEX}/docs/search?api-version={API_VERSION}"
+
+def docs_search_all_url() -> str:
+    return docs_search_url()
+
+def headers_for_search() -> Dict[str, str]:
+    return {
+        "Content-Type": "application/json",
+        "api-key": AZURE_SEARCH_KEY
+    }
+
+# Upload documents (bulk). Each doc must contain only fields present in index:
+# id, content, content_vector, metadata, page
+def rest_index_documents(azure_docs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    payload = {"value": []}
+    for d in azure_docs:
+        item = d.copy()
+        item["@search.action"] = "upload"  # upload new or replace
+        payload["value"].append(item)
+    resp = requests.post(docs_index_url(), headers=headers_for_search(), json=payload, timeout=60)
+    if resp.status_code >= 300:
+        raise Exception(f"Index REST error {resp.status_code}: {resp.text}")
+    return resp.json()
+
+# Vector search via REST with vectorQueries (kind="vector")
+def rest_vector_search(query_vector: List[float], k: int = 5, filter_metadata: List[str] = None) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "top": k,
+        "select": ["id", "content", "metadata", "page"],
+        "vectorQueries": [
+            {
+                "kind": "vector",
+                "vector": query_vector,
+                "fields": "content_vector",
+                "k": k
+            }
+        ]
+    }
+    # optional filter: metadata in ('a','b') -> build an OData-in expression
+    if filter_metadata:
+        # build list of quoted values
+        quoted = ",".join([json.dumps(x) for x in filter_metadata])
+        # metadata is string field - use 'metadata eq 'value'' or use 'metadata in ( ... )' — the service supports 'metadata in (..)'
+        payload["filter"] = f"metadata in ({quoted})"
+    resp = requests.post(docs_search_url(), headers=headers_for_search(), json=payload, timeout=60)
+    if resp.status_code >= 300:
+        raise Exception(f"Search REST error {resp.status_code}: {resp.text}")
+    return resp.json()
+
+# Fetch list of existing metadata values (filenames) from index for selection
+def rest_get_unique_metadata(top: int = 1000) -> List[str]:
+    # Get up to `top` docs and extract metadata
+    payload = {
+        "top": top,
+        "select": ["metadata"]
+    }
+    resp = requests.post(docs_search_all_url(), headers=headers_for_search(), json=payload, timeout=30)
+    if resp.status_code != 200:
+        return []
+    data = resp.json()
+    values = [item.get("metadata") for item in data.get("value", []) if item.get("metadata")]
+    # unique preserve order
+    seen = set()
+    out = []
+    for v in values:
+        if v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+# -------------------------
+# Embedding helpers (Azure OpenAI)
+# -------------------------
+def embed_texts(texts: List[str]) -> List[List[float]]:
+    # batch embed using AzureOpenAI client
+    # openai_client.embeddings.create accepts model and input list
+    if not texts:
+        return []
+    try:
+        resp = openai_client.embeddings.create(
+            model=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
+            input=texts
+        )
+        # resp["data"] is list of {embedding: [...]}
+        return [d["embedding"] for d in resp["data"]]
+    except Exception as e:
+        raise Exception(f"Embedding API failed: {e}")
+
+def embed_text(text: str) -> List[float]:
+    return embed_texts([text])[0]
+
+# -------------------------
+# Upload / indexing pipeline
+# -------------------------
+def upload_and_index_pdf(uploaded_file, chunk_size=1000, chunk_overlap=200) -> bool:
+    """Upload PDF to blob, extract, chunk, embed (batch), and index via REST"""
+    # read bytes
+    try:
+        file_bytes = uploaded_file.getvalue()
+    except Exception:
+        file_bytes = uploaded_file.read()
+
+    # upload to blob storage (store original)
+    try:
+        from azure.storage.blob import BlobServiceClient
+        blob_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION)
+        container = blob_client.get_container_client(AZURE_STORAGE_CONTAINER)
+        blob_name = f"{uuid.uuid4()}-{uploaded_file.name}"
+        container.upload_blob(blob_name, file_bytes, overwrite=True)
+    except Exception as e:
+        st.error(f"Blob upload failed: {e}")
+        return False
+
+    # extract text pages
+    try:
+        pages = extract_text_from_pdf_bytes(file_bytes)
+    except Exception as e:
+        st.error(f"PDF extraction failed: {e}")
+        return False
+
+    # create chunks per page
+    chunk_objs = []  # list of dicts: {"content":..., "page": int}
+    for page_num, page_text in enumerate(pages, start=1):
+        page_chunks = split_text(page_text or "", chunk_size=chunk_size, overlap=chunk_overlap)
+        for pc in page_chunks:
+            chunk_objs.append({"content": pc, "page": page_num})
+
+    if not chunk_objs:
+        st.warning("No extractable text found in PDF.")
+        return False
+
+    # embed all chunk texts in batches
+    texts = [c["content"] for c in chunk_objs]
+    try:
+        vectors = embed_texts(texts)
+    except Exception as e:
+        st.error(f"Embedding failed: {e}")
+        return False
+
+    # prepare azure docs matching index fields only
+    azure_docs = []
+    for idx, c in enumerate(chunk_objs):
+        azure_docs.append({
+            "id": str(uuid.uuid4()),
+            "content": c["content"],
+            "content_vector": vectors[idx],
+            "metadata": uploaded_file.name,
+            "page": int(c["page"] or 0)
+        })
+
+    # index via REST
+    try:
+        resp = rest_index_documents(azure_docs)
+    except Exception as e:
+        st.error(f"Indexing failed: {e}")
+        return False
+
+    return True
+
+# -------------------------
+# Retrieval pipeline
+# -------------------------
+def retrieve_top_chunks(query: str, k: int = 5, selected_docs: List[str] = None) -> List[Dict[str, Any]]:
+    # embed query
+    try:
+        qvec = embed_text(query)
+    except Exception as e:
+        st.error(f"Embedding failed: {e}")
+        return []
+
+    try:
+        resp = rest_vector_search(qvec, k=k, filter_metadata=selected_docs)
+    except Exception as e:
+        st.error(f"Vector search failed: {e}")
+        return []
+
+    values = resp.get("value", [])
+    docs = []
+    for item in values:
+        docs.append({
+            "id": item.get("id"),
+            "content": item.get("content"),
+            "metadata": item.get("metadata"),
+            "page": item.get("page")
+        })
+    return docs
+
+# -------------------------
+# Dedupe exact duplicates
+# -------------------------
+def dedupe_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen = set()
+    out = []
+    for c in chunks:
+        txt = (c.get("content") or "").strip()
+        if not txt:
+            continue
+        if txt not in seen:
+            seen.add(txt)
+            out.append(c)
+    return out
+
+# -------------------------
+# Generation using Azure OpenAI chat (chat deployment)
+# -------------------------
+def generate_answer(question: str, chunks: List[Dict[str, Any]]) -> str:
+    # Build context from up to top 3 chunks
+    context = "\n\n---\n\n".join([f"Source: {c.get('metadata','unknown')} (page {c.get('page')})\n{c.get('content')}" for c in chunks[:3]])
+    system = {"role": "system", "content": "You are a helpful assistant. Answer using ONLY the provided context. If not present, say you don't know."}
+    user = {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}
+    try:
+        resp = openai_client.chat.completions.create(
+            model=AZURE_OPENAI_DEPLOYMENT_NAME,
+            messages=[system, user],
+            max_tokens=500,
+            temperature=0,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        st.error(f"Generation failed: {e}")
+        return ""
+
+# -------------------------
+# UI: Multi-user + Upload + Select + Query + History
 # -------------------------
 # Session init
-# -------------------------
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 if "users_history" not in st.session_state:
     st.session_state["users_history"] = {}
 
-# -------------------------
-# Login UI
-# -------------------------
-def login():
+# Login
+def load_users() -> Dict[str, Dict[str,str]]:
+    users = {}
+    for i in range(1, 25):
+        u = get_secret(f"USER_{i}_USERNAME")
+        p = get_secret(f"USER_{i}_PASSWORD")
+        r = get_secret(f"USER_{i}_ROLE")
+        if u and p:
+            users[u] = {"password": p, "role": r or "reader"}
+    return users
+
+def login_ui():
     st.title("🔐 SmartAssistant Login")
     users = load_users()
     with st.form("login_form"):
@@ -161,250 +387,23 @@ def login():
         else:
             st.error("Invalid username or password")
 
-
 if not st.session_state["authenticated"]:
-    login()
+    login_ui()
     st.stop()
 
 USER = st.session_state["user"]
 ROLE = st.session_state.get("role", "reader")
-
-# -------------------------
-# Initialize clients (OpenAI embedding + chat, Search, Blob)
-# -------------------------
-openai_client = AzureOpenAI(
-    azure_endpoint=AZURE_OPENAI_ENDPOINT,
-    api_key=AZURE_OPENAI_API_KEY,
-    api_version=AZURE_OPENAI_API_VERSION,
-)
-
-embedder = AzureOpenAIEmbeddings(
-    azure_endpoint=AZURE_OPENAI_ENDPOINT,
-    api_key=AZURE_OPENAI_API_KEY,
-    azure_deployment=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
-    api_version=AZURE_OPENAI_API_VERSION,
-)
-
-search_client = SearchClient(
-    endpoint=AZURE_SEARCH_ENDPOINT,
-    index_name=AZURE_SEARCH_INDEX,
-    credential=AzureKeyCredential(AZURE_SEARCH_KEY),
-)
-
-blob_service = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION)
-blob_container = blob_service.get_container_client(AZURE_STORAGE_CONTAINER)
-
-# -------------------------
-# PDF extraction using pypdf
-# -------------------------
-def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> List[str]:
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp.write(pdf_bytes)
-        tmp.flush()
-        tmp_path = tmp.name
-
-    reader = PdfReader(tmp_path)
-    pages = []
-    for p in reader.pages:
-        try:
-            pages.append(p.extract_text() or "")
-        except Exception:
-            pages.append("")
-    return pages
-
-# -------------------------
-# Chunking pages into documents
-# -------------------------
-def chunk_pages_into_documents(pages: List[str], source_name: str, chunk_size: int = 1200, chunk_overlap: int = 50):
-    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    docs = []
-    for page_num, page_text in enumerate(pages, start=1):
-        if LC_Document:
-            base = LC_Document(page_content=page_text, metadata={"metadata": source_name, "page": page_num})
-        else:
-            base = {"page_content": page_text, "metadata": {"metadata": source_name, "page": page_num}}
-        split_docs = splitter.split_documents([base])
-        for sd in split_docs:
-            md = sd.metadata or {}
-            md["metadata"] = md.get("metadata", source_name)
-            sd.metadata = md
-            docs.append(sd)
-    return docs
-
-# -------------------------
-# Indexing: build documents with EXACT fields for your index
-# Fields: id, content, content_vector, metadata, page
-# -------------------------
-def index_documents_to_azure_search(docs) -> (bool, Any):
-    if not docs:
-        return True, "No docs"
-
-    texts = [d.page_content for d in docs]
-    try:
-        vectors = embedder.embed_documents(texts)
-    except Exception as e:
-        return False, f"Embedding failed: {e}"
-
-    azure_docs = []
-    for i, d in enumerate(docs):
-        md = d.metadata or {}
-        doc_id = str(uuid.uuid4())
-        azure_docs.append({
-            "id": doc_id,
-            "content": d.page_content,
-            "content_vector": vectors[i],         # MUST match index field
-            "metadata": md.get("metadata", "unknown"),
-            "page": int(md.get("page", 0) or 0),
-        })
-
-    try:
-        result = search_client.upload_documents(documents=azure_docs)
-        return True, result
-    except Exception as e:
-        return False, f"Search upload failed: {e}"
-
-# -------------------------
-# Upload + index pipeline
-# -------------------------
-def upload_and_index_pdf(uploaded_file) -> bool:
-    try:
-        file_bytes = uploaded_file.getvalue()
-    except Exception:
-        file_bytes = uploaded_file.read()
-
-    # upload original PDF to blob
-    try:
-        blob_name = f"{uuid.uuid4()}-{uploaded_file.name}"
-        blob_container.upload_blob(blob_name, file_bytes, overwrite=True)
-    except Exception as e:
-        st.error(f"Blob upload failed: {e}")
-        return False
-
-    # extract text pages
-    try:
-        pages = extract_text_from_pdf_bytes(file_bytes)
-    except Exception as e:
-        st.error(f"PDF extraction failed: {e}")
-        return False
-
-    # chunk pages into docs
-    try:
-        docs = chunk_pages_into_documents(pages, source_name=uploaded_file.name)
-    except Exception as e:
-        st.error(f"Chunking failed: {e}")
-        return False
-
-    # index
-    ok, info = index_documents_to_azure_search(docs)
-    if not ok:
-        st.error(f"Indexing failed: {info}")
-        return False
-
-    return True
-
-# -------------------------
-def retrieve_top_chunks(query: str, k: int = 5):
-    """
-    Returns list[dict] with id, content, metadata, page.
-    Uses Azure OpenAI embeddings + Azure Search vector search.
-    Compatible with all stable SDK versions.
-    """
-
-    # ----- 1) Embed query -----
-    try:
-        try:
-            qvec = embedder.embed_query(query)
-        except:
-            resp = openai_client.embeddings.create(
-                model=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
-                input=query
-            )
-            qvec = resp["data"][0]["embedding"]
-    except Exception as e:
-        st.error(f"Embedding failed: {e}")
-        return []
-
-    # ----- 2) Search (legacy syntax, fully compatible) -----
-    try:
-        results = search_client.search(
-            search_text=None,
-            vectors=[{
-                "value": qvec,
-                "fields": "content_vector",
-                "k": k
-            }],
-            select=["id", "content", "metadata", "page"],
-            top=k
-        )
-    except Exception as e:
-        st.error(f"Azure Search query failed: {e}")
-        return []
-
-    # ----- 3) Format results -----
-    docs = []
-    try:
-        for r in results:
-            docs.append({
-                "id": r.get("id"),
-                "content": r.get("content"),
-                "source": r.get("metadata"),
-                "page": r.get("page")
-            })
-    except Exception as e:
-        st.error(f"Failed while processing search results: {e}")
-        return []
-    return docs
-
-
-# -------------------------
-# Deduplicate exact duplicate chunks
-# -------------------------
-def dedupe_chunks(chunks: List[Dict]) -> List[Dict]:
-    seen = set()
-    out = []
-    for c in chunks:
-        txt = (c.get("content") or "").strip()
-        if not txt:
-            continue
-        if txt not in seen:
-            seen.add(txt)
-            out.append(c)
-    return out
-
-# -------------------------
-# Generation: Azure OpenAI chat
-# -------------------------
-def generate_answer(question: str, docs: List[Dict]) -> str:
-    context = "\n\n---\n\n".join([f"Source: {d['source']} (page {d.get('page')})\n{d['content']}" for d in docs[:3]])
-    system = {"role": "system", "content": "You are a helpful assistant. Answer using ONLY the provided context. If not present, say you don't know."}
-    user_msg = {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}
-    try:
-        resp = openai_client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT_NAME,
-            messages=[system, user_msg],
-            max_tokens=500,
-            temperature=0,
-        )
-        return resp.choices[0].message.content.strip()
-    except Exception as e:
-        st.error(f"Generation failed: {e}")
-        return ""
-
-# -------------------------
-# UI
-# -------------------------
-st.title("🤖 SmartAssistant — RAG on Azure Search")
+st.title("🤖 SmartAssistant (RAG via Azure Search REST)")
 st.caption(f"Signed in as: **{USER}** (role: {ROLE})")
 
-# Clear conversation
+# Clear conversation button (per-user)
 if st.button("🧹 Clear Conversation"):
     st.session_state["users_history"][USER]["history"] = []
     st.success("Cleared conversation (UI only)")
-    st.rerun()
 
-# Upload (admin + editor)
+# Upload (admin/editor only) - upload + index
 if ROLE in ("admin", "editor"):
-    uploaded = st.file_uploader("Upload PDF to index", type=["pdf"])
+    uploaded = st.file_uploader("Upload PDF to index (PDF only)", type=["pdf"])
     if uploaded:
         st.info(f"Uploading & indexing {uploaded.name} ...")
         ok = upload_and_index_pdf(uploaded)
@@ -412,43 +411,54 @@ if ROLE in ("admin", "editor"):
             st.success("Upload + indexing completed")
             st.session_state["users_history"][USER]["history"].append(f"Uploaded {uploaded.name}")
 else:
-    st.info("Upload disabled for reader role")
+    st.info("Upload disabled for readers")
 
 st.divider()
 
-# Query
-query = st.text_input("Ask a question about indexed documents:")
+# Document selection (one/multiple/all)
+st.subheader("Select documents to search (leave empty = all)")
+try:
+    all_metadata = rest_get_unique_metadata(top=1000)
+except Exception:
+    all_metadata = []
+selected_docs = st.multiselect("Choose documents (filename)", options=all_metadata, default=[])
+
+# Query input
+st.subheader("Ask a question about indexed documents")
+query = st.text_input("Your question:")
+
 if st.button("Run Query"):
     if not query.strip():
-        st.warning("Please enter a question")
+        st.error("Enter a question")
     else:
-        results = retrieve_top_chunks(query, k=8)
-        results = dedupe_chunks(results)
-        results = results[:3]
-        if not results:
+        # If user selected docs, pass list, else None (search all)
+        selected = selected_docs if selected_docs else None
+        with st.spinner("Retrieving relevant chunks..."):
+            try:
+                docs = retrieve_top_chunks(query, k=8, selected_docs=selected)
+            except TypeError:
+                # backward compat - some earlier function signature names
+                docs = retrieve_top_chunks(query, k=8, selected_docs=selected)
+            docs = dedupe_chunks(docs)
+        if not docs:
             st.warning("No relevant documents found.")
         else:
-            answer = generate_answer(query, results)
-            st.subheader("📝 Answer")
-            st.write(answer)
-            st.subheader("📄 Source Chunks")
-            for i, d in enumerate(results, start=1):
-                st.markdown(f"**Source #{i}:** {d['source']} (page {d.get('page')})")
-                st.write(d["content"][:1500])
-                st.markdown("---")
-            st.session_state["users_history"][USER]["history"].append(f"Q: {query} -> A preview: {answer[:120]}")
+            # build answer
+            answer = generate_answer(query, docs)
+            if answer:
+                st.subheader("📝 Answer")
+                st.write(answer)
+                st.subheader("📄 Source Chunks")
+                for i, d in enumerate(docs, start=1):
+                    st.markdown(f"**Source #{i}:** {d.get('metadata','unknown')} (page {d.get('page')})")
+                    st.write(d.get("content")[:1500])
+                    st.markdown("---")
+                st.session_state["users_history"][USER]["history"].append(f"Q: {query} -> A preview: {answer[:120]}")
 
 # Show per-user history
 st.subheader("Your session history (private)")
-history = st.session_state["users_history"].get(USER, {}).get("history", [])
-for h in history:
+history_list = st.session_state["users_history"].get(USER, {}).get("history", [])
+for h in history_list:
     st.write("- ", h)
 
-# EOF
-
-
-
-
-
-
-
+# End of file
