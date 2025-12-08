@@ -336,21 +336,21 @@ def dedupe_chunks(chunks: List[Dict]) -> List[Dict]:
             out.append(c)
     return out
 
-# -------------------------
 # Generation using Azure OpenAI chat
 # -------------------------
 def generate_answer(question: str, docs: List[Dict]) -> str:
-    context = "
+    # Build a single context string from up to the top 3 docs
+    context = "\n\n---\n\n".join([f"Source: {d['source']}\n{d['content']}" for d in docs[:3]])
 
----
+    system = {
+        "role": "system",
+        "content": "You are a helpful assistant. Answer using ONLY the provided context. If not present say you don't know."
+    }
+    user_msg = {
+        "role": "user",
+        "content": f"Context:\n{context}\n\nQuestion: {question}"
+    }
 
-".join([f"Source: {d['source']}
-{d['content']}" for d in docs[:3]])
-    system = {"role": "system", "content": "You are a helpful assistant. Answer using ONLY the provided context. If not present say you don't know."}
-    user_msg = {"role": "user", "content": f"Context:
-{context}
-
-Question: {question}"}
     try:
         resp = openai_client.chat.completions.create(
             model=AZURE_OPENAI_DEPLOYMENT_NAME,
@@ -416,4 +416,5 @@ st.subheader("Your session history (private)")
 for h in st.session_state["users_history"][USER]["history"]:
     st.write("- ", h)
 # EOF
+
 
