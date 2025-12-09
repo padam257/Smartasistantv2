@@ -1,20 +1,42 @@
-azure-core
-unstructured
-pypdf==3.17.4
-streamlit
+#azure-core
+#unstructured
+#pypdf==3.17.4
+#streamlit
 #langchain>=0.2.0
 #langchain-community>=0.2.0
 #langchain-openai>=0.1.0
-pydantic>=2.0
-python-dotenv
+#pydantic>=2.0
+#python-dotenv
 azure-identity
-azure-storage-blob
-azure-search-documents>=11.4.0
-openai>=1.0.0
+#azure-storage-blob
+#azure-search-documents>=11.4.0
+#openai>=1.0.0
 tiktoken
 langchain-text-splitters
 requests
-langchain==0.0.330
-langchain-community==0.0.23
-langchain-openai==0.0.5
+#langchain==0.0.330
+#langchain-community==0.0.23
+#langchain-openai==0.0.5
+
+# ---- LangChain ecosystem (stable) ----
+langchain==0.1.13
+langchain-core==0.1.52
+langchain-community==0.0.28
+langchain-openai==0.1.1
+
+# ---- Azure SDKs ----
+azure-search-documents==11.4.0
+azure-storage-blob==12.19.1
+azure-core==1.30.0
+
+# ---- Document loaders ----
+pypdf==3.17.4
+unstructured==0.12.5
+
+# ---- Streamlit ----
+streamlit==1.35.0
+
+# ---- Others ----
+python-dotenv==1.0.1
+tiktoken==0.6.0
 
