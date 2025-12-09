@@ -11,31 +11,43 @@ azure-identity
 #azure-storage-blob
 #azure-search-documents>=11.4.0
 #openai>=1.0.0
-tiktoken
+#tiktoken
 langchain-text-splitters
-requests
+#requests
 #langchain==0.0.330
 #langchain-community==0.0.23
 #langchain-openai==0.0.5
 
-# ---- LangChain ecosystem (compatible set) ----
-langchain==0.1.13
-langchain-core==0.1.52
-langchain-community==0.0.32
-langchain-openai==0.1.1
-
-# ---- Azure SDKs ----
-azure-search-documents==11.4.0
-azure-storage-blob==12.19.1
-azure-core==1.30.0
-
-# ---- Document loaders ----
-pypdf==3.17.4
-unstructured==0.12.5
-
-# ---- Streamlit ----
-streamlit==1.35.0
-
-# ---- Others ----
+streamlit==1.29.0
 python-dotenv==1.0.1
-tiktoken==0.6.0
+
+# Azure SDKs
+azure-core==1.30.1
+azure-storage-blob==12.19.0
+azure-search-documents==11.4.0
+
+# LangChain new modular packages
+langchain==0.1.13
+langchain-core==0.1.53
+langchain-community==0.0.29
+langchain-openai==0.1.1
+langchain-text-splitters==0.0.1
+
+# Vector store for Azure Cognitive Search
+azure-search-vectorstore==0.0.7
+
+# Document loaders (PDF, TXT, DOCX)
+unstructured==0.12.5
+unstructured[pdf]==0.12.5
+pypdf==3.17.1
+
+# OpenAI SDK
+openai==1.12.0
+
+# Optional: Fix uploads and file handling
+python-magic==0.4.27
+
+# Misc
+tqdm==4.66.1
+requests==2.31.0
+
