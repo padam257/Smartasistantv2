@@ -186,4 +186,3 @@ if question:
     st.subheader("📌 Source Chunks")
     for doc in result["context"]:
         st.write(doc.page_content[:500])
-
