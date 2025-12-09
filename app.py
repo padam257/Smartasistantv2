@@ -60,7 +60,7 @@ search_client = SearchClient(
 llm = AzureChatOpenAI(
     api_key=AZURE_OPENAI_API_KEY,
     azure_endpoint=AZURE_OPENAI_ENDPOINT,
-    azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,
+    deployment_name=AZURE_OPENAI_DEPLOYMENT_NAME,
     api_version="2024-02-15-preview",
     temperature=0,
     max_tokens=500
@@ -186,3 +186,4 @@ if question:
     st.subheader("📌 Source Chunks")
     for doc in result["context"]:
         st.write(doc.page_content[:500])
+
