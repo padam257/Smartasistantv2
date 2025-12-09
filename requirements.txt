@@ -8,10 +8,14 @@ azure-storage-blob==12.19.0
 azure-search-documents==11.4.0
 
 # LangChain ecosystem (compatible)
+#langchain==0.3.8
+#langchain-core==0.3.12
+#langchain-community==0.3.7
+#langchain-openai==0.2.5
 langchain==0.3.8
-langchain-core==0.3.12
-langchain-community==0.3.7
-langchain-openai==0.2.5
+langchain-core==0.3.25
+langchain-community==0.3.8
+langchain-openai==0.2.1
 langchain-text-splitters
 
 # Document loaders
@@ -28,6 +32,7 @@ openai==1.51.0
 azure-identity==1.17.1
 tiktoken==0.7.0
 pydantic==2.8.2
+
 
 
 
