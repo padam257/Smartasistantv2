@@ -46,7 +46,6 @@ openai==1.12.0
 
 # Optional: Fix uploads and file handling
 python-magic==0.4.27
-
 # Misc
 tqdm==4.66.1
 requests==2.31.0
