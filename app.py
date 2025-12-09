@@ -10,7 +10,8 @@ openai.api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
 from azure.core.credentials import AzureKeyCredential
 from azure.storage.blob import BlobServiceClient
 from azure.search.documents import SearchClient
-from langchain.chat_models import AzureChatOpenAI
+#from langchain.chat_models import AzureChatOpenAI
+from langchain_openai import AzureChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain.vectorstores.azuresearch import AzureSearch
@@ -58,11 +59,8 @@ search_client = SearchClient(
 
 # 🔷 LangChain components
 llm = AzureChatOpenAI(
-    #openai_api_key=AZURE_OPENAI_API_KEY,
     api_key=AZURE_OPENAI_API_KEY,
-    #openai_api_base=AZURE_OPENAI_ENDPOINT,
     azure_endpoint=AZURE_OPENAI_ENDPOINT,
-    #deployment_name=AZURE_OPENAI_DEPLOYMENT_NAME,
     azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,
     api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
     temperature=0,
@@ -215,4 +213,5 @@ if user_query:
     st.markdown("### 📄 Source Chunks:")
     for doc in result['source_documents']:
         st.write(doc.page_content[:500])  # Show first 500 chars of each
+
 
