@@ -34,7 +34,7 @@ langchain-openai==0.1.1
 langchain-text-splitters==0.0.1
 
 # Vector store for Azure Cognitive Search
-azure-search-vectorstore==0.0.7
+#azure-search-vectorstore==0.0.7
 
 # Document loaders (PDF, TXT, DOCX)
 unstructured==0.12.5
@@ -50,4 +50,5 @@ python-magic==0.4.27
 # Misc
 tqdm==4.66.1
 requests==2.31.0
+
 
