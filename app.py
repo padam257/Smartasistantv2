@@ -14,7 +14,8 @@ from azure.search.documents import SearchClient
 from langchain_openai import AzureChatOpenAI
 #from langchain.prompts import PromptTemplate
 from langchain_core.prompts import PromptTemplate
-from langchain.chains import RetrievalQA
+#from langchain.chains import RetrievalQA
+from langchain.chains.retrieval import RetrievalQA
 from langchain.vectorstores.azuresearch import AzureSearch
 #from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain_openai import AzureOpenAIEmbeddings
@@ -215,6 +216,7 @@ if user_query:
     st.markdown("### 📄 Source Chunks:")
     for doc in result['source_documents']:
         st.write(doc.page_content[:500])  # Show first 500 chars of each
+
 
 
 
