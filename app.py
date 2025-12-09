@@ -12,7 +12,8 @@ from azure.storage.blob import BlobServiceClient
 from azure.search.documents import SearchClient
 #from langchain.chat_models import AzureChatOpenAI
 from langchain_openai import AzureChatOpenAI
-from langchain.prompts import PromptTemplate
+#from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain.vectorstores.azuresearch import AzureSearch
 #from langchain.embeddings.openai import OpenAIEmbeddings
@@ -21,7 +22,8 @@ from pathlib import Path
 from langchain.schema import Document
 #from langchain_community.document_loaders import UnstructuredFileLoader
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredFileLoader
-from langchain.document_loaders import AzureBlobStorageFileLoader
+#from langchain.document_loaders import AzureBlobStorageFileLoader
+from langchain_community.document_loaders import AzureBlobStorageFileLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 #from langchain_community.embeddings.openai import OpenAIEmbeddings
 #from langchain_community.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
@@ -213,5 +215,6 @@ if user_query:
     st.markdown("### 📄 Source Chunks:")
     for doc in result['source_documents']:
         st.write(doc.page_content[:500])  # Show first 500 chars of each
+
 
 
