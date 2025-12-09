@@ -10,7 +10,7 @@ azure-search-documents==11.4.0
 # LangChain ecosystem (compatible)
 #langchain==0.1.13
 langchain==0.2.12
-langchain-core==0.1.53
+langchain-core
 #langchain-community==0.0.29
 langchain-community==0.2.11
 #langchain-openai==0.1.1
@@ -31,5 +31,6 @@ openai==1.51.0
 azure-identity==1.17.1
 tiktoken==0.7.0
 pydantic==2.8.2
+
 
 
