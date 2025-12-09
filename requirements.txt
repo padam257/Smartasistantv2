@@ -2,9 +2,9 @@ azure-core
 unstructured
 pypdf==3.17.4
 streamlit
-langchain>=0.2.0
-langchain-community>=0.2.0
-langchain-openai>=0.1.0
+#langchain>=0.2.0
+#langchain-community>=0.2.0
+#langchain-openai>=0.1.0
 pydantic>=2.0
 python-dotenv
 azure-identity
@@ -14,4 +14,7 @@ openai>=1.0.0
 tiktoken
 langchain-text-splitters
 requests
+langchain==0.0.330
+langchain-community==0.0.23
+langchain-openai==0.0.5
 
