@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import openai
 import tempfile
+
 openai.api_type = "azure"
 openai.api_key = os.getenv("AZURE_OPENAI_API_KEY")
 openai.api_base = os.getenv("AZURE_OPENAI_ENDPOINT")
@@ -10,46 +11,42 @@ openai.api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
 from azure.core.credentials import AzureKeyCredential
 from azure.storage.blob import BlobServiceClient
 from azure.search.documents import SearchClient
-#from langchain.chat_models import AzureChatOpenAI
-from langchain_openai import AzureChatOpenAI
-#from langchain.prompts import PromptTemplate
-from langchain_core.prompts import PromptTemplate
-from langchain.chains.retrieval import RetrievalQA
-from langchain.vectorstores.azuresearch import AzureSearch
-#from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain_openai import AzureOpenAIEmbeddings
-from pathlib import Path
-from langchain.schema import Document
-#from langchain_community.document_loaders import UnstructuredFileLoader
-from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredFileLoader
-#from langchain.document_loaders import AzureBlobStorageFileLoader
-from langchain_community.document_loaders import AzureBlobStorageFileLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-#from langchain_community.embeddings.openai import OpenAIEmbeddings
-#from langchain_community.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
-#from langchain.retrievers.azure_cognitive_search import AzureCognitiveSearchRetriever
 
-# 🌐 Load environment variable
+from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
+from langchain.vectorstores.azuresearch import AzureSearch
+from langchain.schema import Document
+from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredFileLoader, AzureBlobStorageFileLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_core.prompts import PromptTemplate
+
+# NEW LangChain chain imports
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+
+
+# Load ENV
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")
+
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_ADMIN_KEY = os.getenv("AZURE_SEARCH_ADMIN_KEY")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
+
 AZURE_BLOB_CONNECTION_STRING = os.getenv("AZURE_BLOB_CONNECTION_STRING")
 AZURE_BLOB_CONTAINER_NAME = os.getenv("AZURE_BLOB_CONTAINER_NAME", "smartassistant-index")
 
-# 🔷 Validate config
 if not all([
     AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT_NAME,
     AZURE_SEARCH_ENDPOINT, AZURE_SEARCH_ADMIN_KEY, AZURE_SEARCH_INDEX_NAME,
     AZURE_BLOB_CONNECTION_STRING
 ]):
-    st.error("🚨 One or more required environment variables are missing.")
+    st.error("🚨 Missing required environment variables.")
     st.stop()
 
-# 🔷 Azure clients
+
+# Azure Clients
 blob_service_client = BlobServiceClient.from_connection_string(AZURE_BLOB_CONNECTION_STRING)
 blob_container_client = blob_service_client.get_container_client(AZURE_BLOB_CONTAINER_NAME)
 
@@ -59,164 +56,134 @@ search_client = SearchClient(
     credential=AzureKeyCredential(AZURE_SEARCH_ADMIN_KEY)
 )
 
-# 🔷 LangChain components
+# LLM
 llm = AzureChatOpenAI(
     api_key=AZURE_OPENAI_API_KEY,
     azure_endpoint=AZURE_OPENAI_ENDPOINT,
     azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,
-    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
+    api_version="2024-02-15-preview",
     temperature=0,
     max_tokens=500
 )
 
-#retriever = AzureCognitiveSearchRetriever(
-#    azure_search_endpoint=AZURE_SEARCH_ENDPOINT,
-#    azure_search_key=AZURE_SEARCH_ADMIN_KEY,
-#    index_name=AZURE_SEARCH_INDEX_NAME
-#)
-
+# Embeddings
 embeddings = AzureOpenAIEmbeddings(
-    # openai_api_key=AZURE_OPENAI_API_KEY,
-    # openai_api_base=AZURE_OPENAI_ENDPOINT
-    # openai_api_base=f"{AZURE_OPENAI_ENDPOINT}/openai/deployments/{AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME}",
-    #openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-    azure_deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"),
-    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
-    #openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
-    #deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME", "text-embedding-ada-002"),
-    #openai_api_type="azure"
+    api_key=AZURE_OPENAI_API_KEY,
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+    azure_deployment=AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME,
+    api_version="2024-02-15-preview"
 )
 
+# Vector Store
 vectorstore = AzureSearch(
     azure_search_endpoint=AZURE_SEARCH_ENDPOINT,
     azure_search_key=AZURE_SEARCH_ADMIN_KEY,
     index_name=AZURE_SEARCH_INDEX_NAME,
-    embedding_function=embeddings.embed_query,
+    embedding_function=embeddings.embed_query
 )
 
-retriever = vectorstore.as_retriever()
 
-qa_chain = RetrievalQA.from_chain_type(
-    llm=llm,
-    retriever=retriever,
-    chain_type="stuff",
-    return_source_documents=True
+# === NEW LangChain RAG CHAIN ===
+RAG_PROMPT = PromptTemplate(
+    input_variables=["context", "question"],
+    template="""
+You are an AI assistant answering questions based on organizational SOP documents.
+
+Use only the context below to answer the question.  
+If answer not found, say "No information available in SOP documents."
+
+Context:
+{context}
+
+Question:
+{question}
+
+Answer:
+"""
 )
 
-# 🌟 UI
+document_chain = create_stuff_documents_chain(llm, RAG_PROMPT)
+
+
+# UI Header
 st.title("🤖 SmartAssistantApp: SOP GenAI")
-st.markdown("Query your SOPs using GenAI. Upload PDFs, view existing, and query all or specific.")
+st.markdown("Search your SOPs with GenAI — Upload PDF/TXT/DOCX and ask questions.")
 
-st.header("📄 Upload New SOP PDF")
+# -------------------------------------
+# FILE UPLOAD
+# -------------------------------------
+st.header("📄 Upload New SOP Document")
 uploaded_file = st.file_uploader("Upload SOP", type=["pdf", "txt", "docx"])
 
-if uploaded_file is not None:
+if uploaded_file:
     file_name = uploaded_file.name
-    file_ext = file_name.split(".")[-1].lower()
-    local_path = f"/tmp/{file_name}"
+    extension = file_name.split(".")[-1].lower()
 
-    # 🔹 Save to local temp path
+    local_path = f"/tmp/{file_name}"
     with open(local_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    # 🔹 Upload to Azure Blob Storage
+    # Upload to Blob
     blob_container_client.upload_blob(file_name, uploaded_file, overwrite=True)
-    st.success(f"✅ Uploaded `{file_name}` to Blob")
+    st.success(f"Uploaded `{file_name}` to Azure Blob Storage.")
 
-    # 🔹 Select loader based on file extension
-    if file_ext == "pdf":
-        from langchain_community.document_loaders import PyPDFLoader
+    if extension == "pdf":
         loader = PyPDFLoader(local_path)
-    elif file_ext == "txt":
-        from langchain_community.document_loaders import TextLoader
+    elif extension == "txt":
         loader = TextLoader(local_path)
-    elif file_ext == "docx":
-        from langchain_community.document_loaders import UnstructuredFileLoader
-        loader = UnstructuredFileLoader(local_path)
     else:
-        st.error(f"Unsupported file type: {file_ext}")
-        st.stop()
+        loader = UnstructuredFileLoader(local_path)
 
-    # 🔹 Load, chunk and embed
     try:
         documents = loader.load()
-        from langchain.text_splitter import RecursiveCharacterTextSplitter
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         docs = splitter.split_documents(documents)
 
-    # Flatten metadata and REMOVE 'metadata' key if nested
+        # Fix metadata
         for doc in docs:
-            flat_meta = {}
-            for k, v in doc.metadata.items():
-                if k == "metadata" and isinstance(v, dict):
-                    flat_meta.update(v)  # merge nested fields
-                else:
-                    flat_meta[k] = v
-
-    # Ensure only fields defined in index exist
-            allowed_keys = {"id", "page", "metadata","content_vector"}
-            flat_meta = {k: v for k, v in flat_meta.items() if k in allowed_keys}
-
-    # Ensure correct types
-            flat_meta["source"] = str(flat_meta.get("source", ""))
-            try:
-                flat_meta["page"] = int(flat_meta.get("page", 0))
-            except:
-                flat_meta["page"] = 0
-            
-            doc.metadata = flat_meta
-
-            st.write("✅ Example document to be pushed:")
-            st.write("Debug metadata sample:", docs[0].metadata)
+            meta = doc.metadata or {}
+            cleaned = {"source": meta.get("source", file_name)}
+            doc.metadata = cleaned
 
         vectorstore.add_documents(docs)
+        st.success(f"Indexed `{file_name}` ({len(docs)} chunks).")
 
-        st.success(f"✅ Successfully indexed `{file_name}` with {len(docs)} chunks.")
     except Exception as e:
-        st.error(f"❌ Failed to load or process document: {str(e)}")
+        st.error(f"Error processing document: {str(e)}")
 
-# 📄 Show files in Blob
-st.header("📄 Available SOPs in Blob Storage")
-blobs = list(blob_container_client.list_blobs())
-doc_names = [blob.name for blob in blobs]
-if not doc_names:
-    st.info("No SOPs uploaded yet.")
-else:
-    st.write("Available SOP PDFs:")
-    for doc in doc_names:
-        st.markdown(f"- {doc}")
 
-# 🔍 Query Section
-st.header("🔍 Query SOPs documents")
-query_scope = st.selectbox("Run query on:", ["All Documents"] + doc_names, index=0)
-user_query = st.text_input("Your question:")
+# -------------------------------------
+# LIST BLOB FILES
+# -------------------------------------
+st.header("📄 Available SOP Files")
+blobs = [b.name for b in blob_container_client.list_blobs()]
+st.write(blobs if blobs else "No files uploaded.")
 
-if user_query:
-    # Optional: Filter by document if selected
+# -------------------------------------
+# RAG QUERY
+# -------------------------------------
+st.header("🔍 Query SOP Documents")
+query_scope = st.selectbox("Query on:", ["All Documents"] + blobs)
+question = st.text_input("Enter your question:")
+
+if question:
+    # Retriever (filtered or full)
     if query_scope != "All Documents":
-    #    retriever.filter = f"metadata_storage_name eq '{query_scope}'"
-         retriever = vectorstore.as_retriever(
-             search_kwargs={
-                 "filter": f"metadata_storage_name eq '{query_scope}'"
-             }   
+        retriever = vectorstore.as_retriever(
+            search_kwargs={"filter": f"metadata_storage_name eq '{query_scope}'"}
         )
     else:
-    #    retriever.filter = None
         retriever = vectorstore.as_retriever()
 
-    with st.spinner("Fetching answer..."):
-        result = qa_chain(user_query)
+    rag_chain = create_retrieval_chain(retriever, document_chain)
 
-    st.markdown("### 📝 Answer:")
-    st.write(result['result'])
+    with st.spinner("Searching SOPs..."):
+        result = rag_chain.invoke({"question": question})
 
-    st.markdown("### 📄 Source Chunks:")
-    for doc in result['source_documents']:
-        st.write(doc.page_content[:500])  # Show first 500 chars of each
+    st.subheader("📝 Answer")
+    st.write(result["answer"])
 
-
-
-
+    st.subheader("📌 Source Chunks")
+    for doc in result["context"]:
+        st.write(doc.page_content[:500])
 
