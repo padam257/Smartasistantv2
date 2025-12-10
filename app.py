@@ -3,6 +3,7 @@ import os
 for proxy in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]:
     if proxy in os.environ:
         del os.environ[proxy]
+
 import openai
 import tempfile
 
@@ -25,8 +26,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 
-
-# Load ENV
+# Load ENV Vars
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
@@ -46,7 +46,6 @@ if not all([
 ]):
     st.error("🚨 Missing required environment variables.")
     st.stop()
-
 
 # Azure Clients
 blob_service_client = BlobServiceClient.from_connection_string(AZURE_BLOB_CONNECTION_STRING)
@@ -85,14 +84,12 @@ vectorstore = AzureSearch(
 )
 
 # === RAG PROMPT ===
-from langchain.prompts import PromptTemplate
 RAG_PROMPT = PromptTemplate(
     input_variables=["context", "question"],
     template="""
 You are an AI assistant that answers questions only using the provided context.
-
-If the context does not contain enough information to answer the question,
-respond strictly with: "No information available in SOP documents."
+If the context does not contain enough information, respond only with:
+"No information available in SOP documents."
 
 Context:
 {context}
@@ -104,9 +101,6 @@ Answer:
 """
 )
 
-document_chain = create_stuff_documents_chain(llm, RAG_PROMPT)
-
-# UI Header
 st.title("🤖 SmartAssistantApp: SOP GenAI")
 st.markdown("Search your SOPs with GenAI — Upload PDF/TXT/DOCX and ask questions.")
 
@@ -124,7 +118,6 @@ if uploaded_file:
     with open(local_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    # Upload to Blob
     blob_container_client.upload_blob(file_name, uploaded_file, overwrite=True)
     st.success(f"Uploaded `{file_name}` to Azure Blob Storage.")
 
@@ -151,7 +144,6 @@ if uploaded_file:
     except Exception as e:
         st.error(f"Error processing document: {str(e)}")
 
-
 # -------------------------------------
 # LIST BLOB FILES
 # -------------------------------------
@@ -162,8 +154,6 @@ st.write(blobs if blobs else "No files uploaded.")
 # -------------------------------------
 # RAG QUERY
 # -------------------------------------
-# RAG QUERY (FULLY FIXED)
-# -------------------------------------
 st.header("🔍 Query SOP Documents")
 query_scope = st.selectbox("Query on:", ["All Documents"] + blobs)
 question = st.text_input("Enter your question:")
@@ -173,23 +163,21 @@ if question:
     # -------- RETRIEVER --------
     if query_scope != "All Documents":
         retriever = vectorstore.as_retriever(
-        search_type="similarity",   # or None
-        search_kwargs={"filter": f"file_name eq '{query_scope}'"}
+            search_type="similarity",
+            search_kwargs={"filter": f"file_name eq '{query_scope}'"}
         )
         retriever.k = 5
     else:
         retriever = vectorstore.as_retriever(
-        search_type="hybrid",
-        search_kwargs={}  # <--- IMPORTANT: KEEP EMPTY
+            search_type="hybrid",
+            search_kwargs={}  
         )
-        # Set k here (not in search_kwargs)
         retriever.k = 5
 
     with st.spinner("Searching SOPs..."):
 
-        # Get documents
         docs = retriever.get_relevant_documents(question)
-        
+
         # -------- DEDUPLICATION FIX --------
         unique_docs = []
         seen = set()
@@ -200,16 +188,16 @@ if question:
                 unique_docs.append(d)
         docs = unique_docs
 
-        # Build context
-        context_text = "\n\n".join([doc.page_content[:1500] for doc in docs])
+        # === CONTEXT-AWARE RAG PROMPT ===
+        context = "\n\n".join([doc.page_content for doc in docs])
 
-        # -------- LLM FIX --------
-        prompt = RAG_PROMPT.format(
-            context=context_text,
-            question=question
+        response = llm.invoke(
+            RAG_PROMPT.format(
+                context=context,
+                question=question
+            )
         )
-        answer_obj = llm.invoke(prompt)
-        answer = answer_obj.content
+        answer = response.content
 
     st.subheader("📝 Answer")
     st.write(answer)
@@ -217,6 +205,3 @@ if question:
     st.subheader("📌 Source Chunks")
     for doc in docs:
         st.write(doc.page_content[:500])
-
-
-
