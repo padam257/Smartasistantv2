@@ -138,21 +138,21 @@ if uploaded_file:
         loader = UnstructuredFileLoader(local_path)
 
         try:
-        documents = loader.load()
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        docs = splitter.split_documents(documents)
+            documents = loader.load()
+            splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+            docs = splitter.split_documents(documents)
 
-        # Fix metadata
-        for doc in docs:
-            meta = doc.metadata or {}
-            cleaned = {"source": meta.get("source", file_name)}
-            doc.metadata = cleaned
+            # Fix metadata
+            for doc in docs:
+                meta = doc.metadata or {}
+                cleaned = {"source": meta.get("source", file_name)}
+                doc.metadata = cleaned
 
-        vectorstore.add_documents(docs)
-        st.success(f"Indexed `{file_name}` ({len(docs)} chunks).")
+            vectorstore.add_documents(docs)
+            st.success(f"Indexed `{file_name}` ({len(docs)} chunks).")
 
-    except Exception as e:
-        st.error(f"Error processing document: {str(e)}")
+        except Exception as e:
+            st.error(f"Error processing document: {str(e)}")
 
 
 # -------------------------------------
@@ -189,5 +189,6 @@ if question:
     st.subheader("📌 Source Chunks")
     for doc in result["context"]:
         st.write(doc.page_content[:500])
+
 
 
