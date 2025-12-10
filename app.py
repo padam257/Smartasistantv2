@@ -84,7 +84,6 @@ vectorstore = AzureSearch(
     embedding_function=embeddings.embed_query
 )
 
-
 # === RAG PROMPT (unchanged) ===
 RAG_PROMPT = PromptTemplate(
     input_variables=["context", "question"],
@@ -105,7 +104,6 @@ Answer:
 )
 
 document_chain = create_stuff_documents_chain(llm, RAG_PROMPT)
-
 
 # UI Header
 st.title("🤖 SmartAssistantApp: SOP GenAI")
@@ -169,15 +167,38 @@ question = st.text_input("Enter your question:")
 
 if question:
 
-    # Correct retriever logic using file_name filter
+    # ------------------------------------------------------------------
+    # 🔥 UPDATED SECTION — FIX DUPLICATE FILTER ERROR  
+    # ------------------------------------------------------------------
+
     if query_scope != "All Documents":
-        retriever = vectorstore.as_retriever(
-            search_kwargs={"filter": f"file_name eq '{query_scope}'"}
+
+        # 👉 NEW: We create a custom retriever wrapper.
+        class FilteredRetriever:
+            def __init__(self, vs, filt):
+                self.vs = vs
+                self.filter = filt
+
+            def get_relevant_documents(self, query):
+                return self.vs.hybrid_search(
+                    query,
+                    k=5,
+                    filter=self.filter     # passed only once
+                )
+
+        retriever = FilteredRetriever(
+            vectorstore,
+            filt=f"file_name eq '{query_scope}'"
         )
+
     else:
+        # Default retriever
         retriever = vectorstore.as_retriever(
+            search_type="hybrid",
             search_kwargs={"k": 5}
         )
+
+    # ------------------------------------------------------------------
 
     rag_chain = create_retrieval_chain(retriever, document_chain)
 
@@ -190,6 +211,8 @@ if question:
     st.subheader("📌 Source Chunks")
     for doc in result["context"]:
         st.write(doc.page_content[:500])
+
+
 
 
 
