@@ -23,7 +23,8 @@ pypdf==3.17.1
 
 # OpenAI SDK
 #openai==1.12.0
-openai==1.51.0
+#openai==1.51.0
+openai==1.46.0
 
 # Misc utilities
 #tqdm==4.66.1
@@ -32,6 +33,7 @@ openai==1.51.0
 azure-identity==1.17.1
 tiktoken==0.7.0
 pydantic==2.8.2
+
 
 
 
