@@ -84,14 +84,15 @@ vectorstore = AzureSearch(
     embedding_function=embeddings.embed_query
 )
 
-# === RAG PROMPT (unchanged) ===
+# === RAG PROMPT ===
+from langchain.prompts import PromptTemplate
 RAG_PROMPT = PromptTemplate(
     input_variables=["context", "question"],
     template="""
-You are an AI assistant answering questions based on organizational SOP documents.
+You are an AI assistant that answers questions only using the provided context.
 
-Use only the context below to answer the question.  
-If answer not found, say "No information available in SOP documents."
+If the context does not contain enough information to answer the question,
+respond strictly with: "No information available in SOP documents."
 
 Context:
 {context}
@@ -188,7 +189,7 @@ if question:
 
         # Get documents
         docs = retriever.get_relevant_documents(question)
-
+        
         # -------- DEDUPLICATION FIX --------
         unique_docs = []
         seen = set()
@@ -200,7 +201,7 @@ if question:
         docs = unique_docs
 
         # Build context
-        context_text = "\n\n".join([d.page_content[:1500] for d in docs])
+        context_text = "\n\n".join([doc.page_content[:1500] for doc in docs])
 
         # -------- LLM FIX --------
         prompt = RAG_PROMPT.format(
@@ -216,5 +217,6 @@ if question:
     st.subheader("📌 Source Chunks")
     for doc in docs:
         st.write(doc.page_content[:500])
+
 
 
