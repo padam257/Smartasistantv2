@@ -161,8 +161,7 @@ st.write(blobs if blobs else "No files uploaded.")
 # -------------------------------------
 # RAG QUERY
 # -------------------------------------
-# -------------------------------------
-# RAG QUERY (FIXED)
+# RAG QUERY (FULLY FIXED)
 # -------------------------------------
 st.header("🔍 Query SOP Documents")
 query_scope = st.selectbox("Query on:", ["All Documents"] + blobs)
@@ -170,32 +169,44 @@ question = st.text_input("Enter your question:")
 
 if question:
 
-    # -------- FIX 1: Correct retriever logic --------
+    # -------- RETRIEVER --------
     if query_scope != "All Documents":
         retriever = vectorstore.as_retriever(
             search_kwargs={
                 "filter": f"file_name eq '{query_scope}'"
-                # DO NOT pass k here (Fix for hybrid_search error)
             }
         )
     else:
-        retriever = vectorstore.as_retriever()  # default
+        retriever = vectorstore.as_retriever(
+            search_type="hybrid",
+            search_kwargs={"k": 5}
+        )
 
     with st.spinner("Searching SOPs..."):
 
-        # -------- FIX 2: Manual RAG pipeline (NO create_retrieval_chain) --------
+        # Get documents
         docs = retriever.get_relevant_documents(question)
 
-        # Prepare context
-        context_text = "\n\n".join([d.page_content for d in docs])
+        # -------- DEDUPLICATION FIX --------
+        unique_docs = []
+        seen = set()
+        for d in docs:
+            snippet = d.page_content[:200]
+            if snippet not in seen:
+                seen.add(snippet)
+                unique_docs.append(d)
+        docs = unique_docs
 
-        # Run LLM
-        answer = llm.invoke(
-            RAG_PROMPT.format(
-                context=context_text,
-                question=question
-            )
+        # Build context
+        context_text = "\n\n".join([d.page_content[:1500] for d in docs])
+
+        # -------- LLM FIX --------
+        prompt = RAG_PROMPT.format(
+            context=context_text,
+            question=question
         )
+        answer_obj = llm.invoke(prompt)
+        answer = answer_obj.content
 
     st.subheader("📝 Answer")
     st.write(answer)
@@ -203,11 +214,3 @@ if question:
     st.subheader("📌 Source Chunks")
     for doc in docs:
         st.write(doc.page_content[:500])
-
-
-
-
-
-
-
-
