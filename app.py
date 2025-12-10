@@ -87,8 +87,15 @@ vectorstore = AzureSearch(
 RAG_PROMPT = PromptTemplate(
     input_variables=["context", "question"],
     template="""
-You are an AI assistant that answers questions only using the provided context.
-If the context does not contain enough information, respond only with:
+You are an AI assistant that answers questions using ONLY the information in the provided context.
+
+If the exact answer is NOT stated in the context, you may provide:
+- An approximation or inferred answer, OR  
+- A calculation based on available information  
+
+…but you must clearly state that it is an estimation.
+
+If NO estimation is possible, then respond:
 "No information available in SOP documents."
 
 Context:
@@ -205,3 +212,4 @@ if question:
     st.subheader("📌 Source Chunks")
     for doc in docs:
         st.write(doc.page_content[:500])
+
