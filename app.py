@@ -1,5 +1,8 @@
 import streamlit as st
 import os
+for proxy in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]:
+    if proxy in os.environ:
+        del os.environ[proxy]
 import openai
 import tempfile
 
@@ -186,5 +189,6 @@ if question:
     st.subheader("📌 Source Chunks")
     for doc in result["context"]:
         st.write(doc.page_content[:500])
+
 
 
