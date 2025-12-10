@@ -172,15 +172,17 @@ if question:
     # -------- RETRIEVER --------
     if query_scope != "All Documents":
         retriever = vectorstore.as_retriever(
-            search_kwargs={
-                "filter": f"file_name eq '{query_scope}'"
-            }
+        search_type="similarity",   # or None
+        search_kwargs={"filter": f"file_name eq '{query_scope}'"}
         )
+    retriever.k = 5
     else:
         retriever = vectorstore.as_retriever(
-            search_type="hybrid",
-            search_kwargs={"k": 5}
+        search_type="hybrid",
+        search_kwargs={}  # <--- IMPORTANT: KEEP EMPTY
         )
+        # Set k here (not in search_kwargs)
+        retriever.k = 5
 
     with st.spinner("Searching SOPs..."):
 
@@ -214,3 +216,4 @@ if question:
     st.subheader("📌 Source Chunks")
     for doc in docs:
         st.write(doc.page_content[:500])
+
