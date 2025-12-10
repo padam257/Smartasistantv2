@@ -175,7 +175,7 @@ if question:
         search_type="similarity",   # or None
         search_kwargs={"filter": f"file_name eq '{query_scope}'"}
         )
-    retriever.k = 5
+        retriever.k = 5
     else:
         retriever = vectorstore.as_retriever(
         search_type="hybrid",
@@ -216,4 +216,5 @@ if question:
     st.subheader("📌 Source Chunks")
     for doc in docs:
         st.write(doc.page_content[:500])
+
 
