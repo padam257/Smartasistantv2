@@ -137,7 +137,7 @@ if uploaded_file:
     else:
         loader = UnstructuredFileLoader(local_path)
 
-    try:
+        try:
         documents = loader.load()
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         docs = splitter.split_documents(documents)
@@ -181,7 +181,7 @@ if question:
     rag_chain = create_retrieval_chain(retriever, document_chain)
 
     with st.spinner("Searching SOPs..."):
-        result = rag_chain.invoke({"question": question})
+        result = rag_chain.invoke({"input": question})
 
     st.subheader("📝 Answer")
     st.write(result["answer"])
@@ -189,4 +189,5 @@ if question:
     st.subheader("📌 Source Chunks")
     for doc in result["context"]:
         st.write(doc.page_content[:500])
+
 
