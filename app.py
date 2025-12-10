@@ -173,7 +173,7 @@ if question:
     # Retriever (filtered or full)
     if query_scope != "All Documents":
         retriever = vectorstore.as_retriever(
-            search_kwargs={"filter": f"metadata_storage_name eq '{query_scope}'"}
+            search_kwargs={"filters": f"source eq '{query_scope}'"}
         )
     else:
         retriever = vectorstore.as_retriever()
@@ -189,6 +189,7 @@ if question:
     st.subheader("📌 Source Chunks")
     for doc in result["context"]:
         st.write(doc.page_content[:500])
+
 
 
 
