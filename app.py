@@ -161,56 +161,49 @@ st.write(blobs if blobs else "No files uploaded.")
 # -------------------------------------
 # RAG QUERY
 # -------------------------------------
+# -------------------------------------
+# RAG QUERY (FIXED)
+# -------------------------------------
 st.header("🔍 Query SOP Documents")
 query_scope = st.selectbox("Query on:", ["All Documents"] + blobs)
 question = st.text_input("Enter your question:")
 
 if question:
 
-    # ------------------------------------------------------------------
-    # 🔥 UPDATED SECTION — FIX DUPLICATE FILTER ERROR  
-    # ------------------------------------------------------------------
-
+    # -------- FIX 1: Correct retriever logic --------
     if query_scope != "All Documents":
-
-        # 👉 NEW: We create a custom retriever wrapper.
-        class FilteredRetriever:
-            def __init__(self, vs, filt):
-                self.vs = vs
-                self.filter = filt
-
-            def get_relevant_documents(self, query):
-                return self.vs.hybrid_search(
-                    query,
-                    k=5,
-                    filter=self.filter     # passed only once
-                )
-
-        retriever = FilteredRetriever(
-            vectorstore,
-            filt=f"file_name eq '{query_scope}'"
-        )
-
-    else:
-        # Default retriever
         retriever = vectorstore.as_retriever(
-            search_type="hybrid",
-            search_kwargs={"k": 5}
+            search_kwargs={
+                "filter": f"file_name eq '{query_scope}'"
+                # DO NOT pass k here (Fix for hybrid_search error)
+            }
         )
-
-    # ------------------------------------------------------------------
-
-    rag_chain = create_retrieval_chain(retriever, document_chain)
+    else:
+        retriever = vectorstore.as_retriever()  # default
 
     with st.spinner("Searching SOPs..."):
-        result = rag_chain.invoke({"input": question})
+
+        # -------- FIX 2: Manual RAG pipeline (NO create_retrieval_chain) --------
+        docs = retriever.get_relevant_documents(question)
+
+        # Prepare context
+        context_text = "\n\n".join([d.page_content for d in docs])
+
+        # Run LLM
+        answer = llm.invoke(
+            RAG_PROMPT.format(
+                context=context_text,
+                question=question
+            )
+        )
 
     st.subheader("📝 Answer")
-    st.write(result["answer"])
+    st.write(answer)
 
     st.subheader("📌 Source Chunks")
-    for doc in result["context"]:
+    for doc in docs:
         st.write(doc.page_content[:500])
+
 
 
 
