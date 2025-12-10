@@ -17,8 +17,7 @@ from azure.search.documents import SearchClient
 
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 from langchain.vectorstores.azuresearch import AzureSearch
-from langchain.schema import Document
-from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredFileLoader, AzureBlobStorageFileLoader
+from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredFileLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.prompts import PromptTemplate
 
@@ -86,7 +85,7 @@ vectorstore = AzureSearch(
 )
 
 
-# === NEW LangChain RAG CHAIN ===
+# === RAG PROMPT (unchanged) ===
 RAG_PROMPT = PromptTemplate(
     input_variables=["context", "question"],
     template="""
@@ -130,6 +129,7 @@ if uploaded_file:
     blob_container_client.upload_blob(file_name, uploaded_file, overwrite=True)
     st.success(f"Uploaded `{file_name}` to Azure Blob Storage.")
 
+    # Select loader
     if extension == "pdf":
         loader = PyPDFLoader(local_path)
     elif extension == "txt":
@@ -137,22 +137,20 @@ if uploaded_file:
     else:
         loader = UnstructuredFileLoader(local_path)
 
-        try:
-            documents = loader.load()
-            splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-            docs = splitter.split_documents(documents)
+    try:
+        documents = loader.load()
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        docs = splitter.split_documents(documents)
 
-            # Fix metadata
-            for doc in docs:
-                meta = doc.metadata or {}
-                cleaned = {"source": meta.get("source", file_name)}
-                doc.metadata = cleaned
+        # FIX: metadata must contain file_name (your index field)
+        for doc in docs:
+            doc.metadata = {"file_name": file_name}
 
-            vectorstore.add_documents(docs)
-            st.success(f"Indexed `{file_name}` ({len(docs)} chunks).")
+        vectorstore.add_documents(docs)
+        st.success(f"Indexed `{file_name}` ({len(docs)} chunks).")
 
-        except Exception as e:
-            st.error(f"Error processing document: {str(e)}")
+    except Exception as e:
+        st.error(f"Error processing document: {str(e)}")
 
 
 # -------------------------------------
@@ -170,13 +168,16 @@ query_scope = st.selectbox("Query on:", ["All Documents"] + blobs)
 question = st.text_input("Enter your question:")
 
 if question:
-    # Retriever (filtered or full)
+
+    # Correct retriever logic using file_name filter
     if query_scope != "All Documents":
         retriever = vectorstore.as_retriever(
-            search_kwargs={"filters": f"source eq '{query_scope}'"}
+            search_kwargs={"filter": f"file_name eq '{query_scope}'"}
         )
     else:
-        retriever = vectorstore.as_retriever()
+        retriever = vectorstore.as_retriever(
+            search_kwargs={"k": 5}
+        )
 
     rag_chain = create_retrieval_chain(retriever, document_chain)
 
@@ -189,6 +190,7 @@ if question:
     st.subheader("📌 Source Chunks")
     for doc in result["context"]:
         st.write(doc.page_content[:500])
+
 
 
 
