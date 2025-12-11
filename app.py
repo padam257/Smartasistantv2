@@ -190,6 +190,9 @@ if reset_query:
 # -------------------------------
 # RUN QUERY
 # -------------------------------
+# -------------------------------
+# RUN QUERY (REPLACE EXISTING run_query BLOCK WITH THIS)
+# -------------------------------
 if run_query:
 
     if not question.strip():
@@ -210,7 +213,7 @@ if run_query:
 
     retriever.k = 5
 
-    # Timeout wrapper
+    # Timeout wrapper for retriever
     result_holder = {"docs": None, "error": None}
 
     def retrieve():
@@ -224,57 +227,94 @@ if run_query:
         t.start()
         t.join(timeout=7)
 
+        # handle timeout: thread still alive
         if t.is_alive():
-            result_holder["error"] = TimeoutError("Timed out.")
+            result_holder["error"] = TimeoutError("Retriever timed out")
             result_holder["docs"] = []
 
-    if result_holder["error"] or not result_holder["docs"]:
-        st.session_state.query_result = "No information available in SOP documents."
-        st.session_state.source_docs = []
-
-    # --- SAFETY: Ensure docs is a list ---
+    # --- SAFETY: ensure docs iterable
     if result_holder["docs"] is None:
         result_holder["docs"] = []
-    
-    # Deduplicate
-    unique_docs = []
-    seen = set()
-    for d in result_holder["docs"]:
-        snip = d.page_content[:200]
-        if snip not in seen:
-            seen.add(snip)
-            unique_docs.append(d)
 
-    docs = unique_docs
-
-    # --- NEW: HANDLE NO DOCUMENT MATCH ---
-    if not docs:
+    # If retriever had an error -> show debug and fallback
+    if result_holder["error"] is not None:
+        st.error(f"Retriever error: {result_holder['error']}")
         st.session_state.query_result = "No information available in SOP documents."
         st.session_state.source_docs = []
-        st.stop()
-    # --- END NEW BLOCK ---
+        # Fall back to light debugging info below (will show index entries)
+    elif not result_holder["docs"]:
+        # No vector hits. Provide diagnostic info to help fix index/metadata problems.
+        st.warning("No vector matches found for this query and scope. Showing diagnostics...")
 
-    # Build context
-    context_text = "\n\n".join([d.page_content for d in docs])
+        # 1) Show whether the index contains documents with the selected file name
+        if query_scope != "All Documents":
+            try:
+                # run a light keyword search on the index to see if docs matching file_name exist
+                hits = list(search_client.search(search_text="*", filter=f"file_name eq '{query_scope}'", top=5))
+                st.write(f"Index hits for file_name == '{query_scope}': {len(hits)}")
+                if hits:
+                    st.write("Sample index document fields (first hit):")
+                    # show fields (avoid large dumps)
+                    sample = hits[0].get("content", None) or hits[0]
+                    st.write(sample if isinstance(sample, str) else dict(hits[0]))
+                else:
+                    st.info("No index documents found matching that file_name. Possible mismatch between blob name and indexed metadata.")
+            except Exception as e:
+                st.write("Diagnostic search failed:", str(e))
+        else:
+            # All documents chosen but no vector hits: show how many indexed docs exist
+            try:
+                hits = list(search_client.search(search_text="*", top=5))
+                st.write(f"Top {len(hits)} index entries (sample):")
+                if hits:
+                    st.write(dict(hits[0]))
+            except Exception as e:
+                st.write("Diagnostic search failed:", str(e))
 
-    # LLM
-    final_prompt = RAG_PROMPT.format(context=context_text, question=question)
-    llm_answer = llm.invoke(final_prompt).content
+        # Finally set "No information available" as the answer
+        st.session_state.query_result = "No information available in SOP documents."
+        st.session_state.source_docs = []
+    else:
+        # We have vector results — proceed
+        # Ensure result_holder["docs"] is iterable list
+        if result_holder["docs"] is None:
+            result_holder["docs"] = []
 
-    st.session_state.query_result = llm_answer
-    st.session_state.source_docs = docs
+        # Deduplicate
+        unique_docs = []
+        seen = set()
+        for d in result_holder["docs"]:
+            # guard: ensure doc has page_content
+            content = getattr(d, "page_content", None) or getattr(d, "content", None) or ""
+            snip = content[:200]
+            if snip not in seen:
+                seen.add(snip)
+                # normalize doc to always have .page_content (some providers use .content)
+                if not getattr(d, "page_content", None) and getattr(d, "content", None):
+                    d.page_content = d.content
+                unique_docs.append(d)
 
+        docs = unique_docs
 
-# -------------------------------
-# SHOW OUTPUT
-# -------------------------------
-if st.session_state.query_result is not None:
-    st.subheader("📝 Answer")
-    st.write(st.session_state.query_result)
+        # If after dedupe nothing remains
+        if not docs:
+            st.session_state.query_result = "No information available in SOP documents."
+            st.session_state.source_docs = []
+        else:
+            # Build full context
+            context_text = "\n\n".join([d.page_content for d in docs])
 
-    if st.session_state.source_docs:
-        st.subheader("📌 Source Chunks")
-        for d in st.session_state.source_docs:
-            st.write(d.page_content[:500])
+            # Debug: show how many chunks will be sent (optional, remove if noisy)
+            st.write(f"Retrieved {len(docs)} chunk(s); sending to LLM...")
 
+            # LLM invocation (use final_prompt)
+            final_prompt = RAG_PROMPT.format(context=context_text, question=question)
 
+            try:
+                llm_answer = llm.invoke(final_prompt).content
+            except Exception as e:
+                st.error(f"LLM invocation error: {e}")
+                llm_answer = "No information available in SOP documents."
+
+            st.session_state.query_result = llm_answer
+            st.session_state.source_docs = docs
