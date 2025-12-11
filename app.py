@@ -159,13 +159,39 @@ blobs = [b.name for b in blob_container_client.list_blobs()]
 st.write(blobs if blobs else "No files uploaded.")
 
 # -------------------------------------
-# RAG QUERY
+# -------------------------------------
+# RAG QUERY SECTION (FULLY FIXED)
 # -------------------------------------
 st.header("🔍 Query SOP Documents")
+
+# Session state for clearing context
+if "query_result" not in st.session_state:
+    st.session_state.query_result = None
+if "source_docs" not in st.session_state:
+    st.session_state.source_docs = None
+
 query_scope = st.selectbox("Query on:", ["All Documents"] + blobs)
+
 question = st.text_input("Enter your question:")
 
-if question:
+col1, col2 = st.columns(2)
+
+run_query = col1.button("Run Query")
+reset_query = col2.button("Reset")
+
+# Reset clears session state
+if reset_query:
+    st.session_state.query_result = None
+    st.session_state.source_docs = None
+    st.success("Query reset successfully.")
+    st.stop()
+
+# Execute ONLY when Run Query button is pressed
+if run_query:
+
+    if not question.strip():
+        st.warning("Please enter a question before running query.")
+        st.stop()
 
     # -------- RETRIEVER --------
     if query_scope != "All Documents":
@@ -177,39 +203,58 @@ if question:
     else:
         retriever = vectorstore.as_retriever(
             search_type="hybrid",
-            search_kwargs={}  
+            search_kwargs={}
         )
         retriever.k = 5
 
     with st.spinner("Searching SOPs..."):
+        try:
+            docs = retriever.get_relevant_documents(question)
 
-        docs = retriever.get_relevant_documents(question)
+        except Exception:
+            # JSONDecodeError FIX
+            st.session_state.query_result = "No information available in SOP documents."
+            st.session_state.source_docs = []
+            st.stop()
 
-        # -------- DEDUPLICATION FIX --------
-        unique_docs = []
-        seen = set()
-        for d in docs:
-            snippet = d.page_content[:200]
-            if snippet not in seen:
-                seen.add(snippet)
-                unique_docs.append(d)
-        docs = unique_docs
+        # If no relevant documents found → return safe output
+        if not docs:
+            st.session_state.query_result = "No information available in SOP documents."
+            st.session_state.source_docs = []
+        else:
+            # -------- DEDUPLICATION --------
+            unique_docs = []
+            seen = set()
+            for d in docs:
+                snippet = d.page_content[:200]
+                if snippet not in seen:
+                    seen.add(snippet)
+                    unique_docs.append(d)
+            docs = unique_docs
 
-        # === CONTEXT-AWARE RAG PROMPT ===
-        context = "\n\n".join([doc.page_content for doc in docs])
+            # Build full context
+            context_text = "\n\n".join([doc.page_content for doc in docs])
 
-        response = llm.invoke(
-            RAG_PROMPT.format(
-                context=context,
+            # LLM call
+            prompt = RAG_PROMPT.format(
+                context=context_text,
                 question=question
             )
-        )
-        answer = response.content
 
+            answer_obj = llm.invoke(prompt)
+            answer = answer_obj.content
+
+            st.session_state.query_result = answer
+            st.session_state.source_docs = docs
+
+# SHOW OUTPUT (only when query executed)
+if st.session_state.query_result is not None:
     st.subheader("📝 Answer")
-    st.write(answer)
+    st.write(st.session_state.query_result)
 
-    st.subheader("📌 Source Chunks")
-    for doc in docs:
-        st.write(doc.page_content[:500])
+    if st.session_state.source_docs:
+        st.subheader("📌 Source Chunks")
+        for doc in st.session_state.source_docs:
+            st.write(doc.page_content[:500])
+
 
