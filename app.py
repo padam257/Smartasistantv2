@@ -173,7 +173,8 @@ if "source_docs" not in st.session_state:
     st.session_state.source_docs = None
 
 query_scope = st.selectbox("Search Scope:", ["All Documents"] + blobs)
-question = st.text_input("Enter your question:")
+#question = st.text_input("Enter your question:")
+question = st.text_input("Enter your question:", key="user_question")
 
 col1, col2 = st.columns(2)
 run_query = col1.button("Run Query")
@@ -182,8 +183,8 @@ reset_query = col2.button("Reset")
 if reset_query:
     st.session_state.query_result = None
     st.session_state.source_docs = None
-    st.success("Query reset.")
-    st.stop()
+    st.session_state.user_question = ""   # CLEAR TEXT BOX
+    st.success("Query reset successfully.")
 
 
 # -------------------------------
@@ -230,7 +231,6 @@ if run_query:
     if result_holder["error"] or not result_holder["docs"]:
         st.session_state.query_result = "No information available in SOP documents."
         st.session_state.source_docs = []
-        st.stop()
 
     # Deduplicate
     unique_docs = []
@@ -242,6 +242,13 @@ if run_query:
             unique_docs.append(d)
 
     docs = unique_docs
+
+    # --- NEW: HANDLE NO DOCUMENT MATCH ---
+    if not docs:
+        st.session_state.query_result = "No information available in SOP documents."
+        st.session_state.source_docs = []
+        st.stop()
+    # --- END NEW BLOCK ---
 
     # Build context
     context_text = "\n\n".join([d.page_content for d in docs])
@@ -265,3 +272,4 @@ if st.session_state.query_result is not None:
         st.subheader("📌 Source Chunks")
         for d in st.session_state.source_docs:
             st.write(d.page_content[:500])
+
