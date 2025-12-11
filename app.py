@@ -159,8 +159,7 @@ blobs = [b.name for b in blob_container_client.list_blobs()]
 st.write(blobs if blobs else "No files uploaded.")
 
 # -------------------------------------
-# -------------------------------------
-# RAG QUERY SECTION (FULLY FIXED)
+# RAG QUERY SECTION
 # -------------------------------------
 st.header("🔍 Query SOP Documents")
 
@@ -171,11 +170,9 @@ if "source_docs" not in st.session_state:
     st.session_state.source_docs = None
 
 query_scope = st.selectbox("Query on:", ["All Documents"] + blobs)
-
 question = st.text_input("Enter your question:")
 
 col1, col2 = st.columns(2)
-
 run_query = col1.button("Run Query")
 reset_query = col2.button("Reset")
 
@@ -207,45 +204,72 @@ if run_query:
         )
         retriever.k = 5
 
+    # ---------------------------------------------------------
+    # 🔥 TIMEOUT-PROTECTED RETRIEVER BLOCK (NEW)
+    # ---------------------------------------------------------
     with st.spinner("Searching SOPs..."):
-        try:
-            docs = retriever.get_relevant_documents(question)
 
-        except Exception:
-            # JSONDecodeError FIX
+        import threading
+
+        result_holder = {"docs": None, "error": None}
+
+        def run_retriever():
+            try:
+                result_holder["docs"] = retriever.get_relevant_documents(question)
+            except Exception as e:
+                result_holder["error"] = e
+
+        t = threading.Thread(target=run_retriever)
+        t.start()
+        t.join(timeout=7)  # <-- 7-second timeout
+
+        # If still running → timeout
+        if t.is_alive():
+            result_holder["error"] = TimeoutError("Retriever timed out")
+            result_holder["docs"] = []
+
+        # Any retriever error → safe fallback
+        if result_holder["error"] is not None:
             st.session_state.query_result = "No information available in SOP documents."
             st.session_state.source_docs = []
             st.stop()
 
-        # If no relevant documents found → return safe output
+        docs = result_holder["docs"]
+
+        # No docs returned → safe fallback
         if not docs:
             st.session_state.query_result = "No information available in SOP documents."
             st.session_state.source_docs = []
-        else:
-            # -------- DEDUPLICATION --------
-            unique_docs = []
-            seen = set()
-            for d in docs:
-                snippet = d.page_content[:200]
-                if snippet not in seen:
-                    seen.add(snippet)
-                    unique_docs.append(d)
-            docs = unique_docs
+            st.stop()
 
-            # Build full context
-            context_text = "\n\n".join([doc.page_content for doc in docs])
+    # ---------------------------------------------------------
+    # END TIMEOUT BLOCK
+    # ---------------------------------------------------------
 
-            # LLM call
-            prompt = RAG_PROMPT.format(
-                context=context_text,
-                question=question
-            )
+    # -------- DEDUPLICATION --------
+    unique_docs = []
+    seen = set()
+    for d in docs:
+        snippet = d.page_content[:200]
+        if snippet not in seen:
+            seen.add(snippet)
+            unique_docs.append(d)
+    docs = unique_docs
 
-            answer_obj = llm.invoke(prompt)
-            answer = answer_obj.content
+    # Build full context
+    context_text = "\n\n".join([doc.page_content for doc in docs])
 
-            st.session_state.query_result = answer
-            st.session_state.source_docs = docs
+    # LLM call
+    prompt = RAG_PROMPT.format(
+        context=context_text,
+        question=question
+    )
+
+    answer_obj = llm.invoke(prompt)
+    answer = answer_obj.content
+
+    st.session_state.query_result = answer
+    st.session_state.source_docs = docs
 
 # SHOW OUTPUT (only when query executed)
 if st.session_state.query_result is not None:
@@ -256,5 +280,3 @@ if st.session_state.query_result is not None:
         st.subheader("📌 Source Chunks")
         for doc in st.session_state.source_docs:
             st.write(doc.page_content[:500])
-
-
