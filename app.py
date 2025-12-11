@@ -232,6 +232,10 @@ if run_query:
         st.session_state.query_result = "No information available in SOP documents."
         st.session_state.source_docs = []
 
+    # --- SAFETY: Ensure docs is a list ---
+    if result_holder["docs"] is None:
+        result_holder["docs"] = []
+    
     # Deduplicate
     unique_docs = []
     seen = set()
@@ -272,4 +276,5 @@ if st.session_state.query_result is not None:
         st.subheader("📌 Source Chunks")
         for d in st.session_state.source_docs:
             st.write(d.page_content[:500])
+
 
