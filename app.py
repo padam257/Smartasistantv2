@@ -289,7 +289,7 @@ if st.button("Delete selected documents"):
             st.error(f"Failures: {failed}")
 
         # refresh blob_list (next rerun)
-        st.experimental_rerun()
+        st.rerun()
 
 # --------------------------
 # Query UI
@@ -428,3 +428,4 @@ if st.session_state.get("query_result") is not None:
         for idx, d in enumerate(st.session_state.source_docs, start=1):
             snippet = getattr(d, "page_content", "")[:600]
             st.write(f"{idx}. {snippet}")
+
