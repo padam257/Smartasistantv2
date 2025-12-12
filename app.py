@@ -18,6 +18,13 @@ from langchain_community.document_loaders import PyPDFLoader, TextLoader, Unstru
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.prompts import PromptTemplate
 
+# try numpy, fallback to pure python
+try:
+    import numpy as np
+    _HAS_NUMPY = True
+except Exception:
+    _HAS_NUMPY = False
+
 # -------------------------------
 # ENVIRONMENT VARIABLES
 # -------------------------------
@@ -104,6 +111,29 @@ Answer:
 )
 
 # -------------------------------
+# small helper: cosine similarity
+# -------------------------------
+def cosine_similarity(a, b):
+    # a, b: lists or numpy arrays
+    if a is None or b is None:
+        return 0.0
+    if _HAS_NUMPY:
+        a_np = np.array(a, dtype=float)
+        b_np = np.array(b, dtype=float)
+        denom = (np.linalg.norm(a_np) * np.linalg.norm(b_np)) + 1e-12
+        return float(np.dot(a_np, b_np) / denom)
+    else:
+        # pure python fallback
+        try:
+            dot = sum(x * y for x, y in zip(a, b))
+            norm_a = sum(x * x for x in a) ** 0.5
+            norm_b = sum(y * y for y in b) ** 0.5
+            denom = (norm_a * norm_b) + 1e-12
+            return dot / denom
+        except Exception:
+            return 0.0
+
+# -------------------------------
 # STREAMLIT UI
 # -------------------------------
 st.title("🤖 SmartAssistantApp: SOP GenAI")
@@ -174,8 +204,10 @@ reset_query = col2.button("Reset")
 if reset_query:
     st.session_state.query_result = None
     st.session_state.source_docs = None
-    st.session_state.user_question = ""
+    # safe reset for the text box
+    st.session_state["user_question"] = ""
     st.success("Query reset successfully.")
+    st.experimental_rerun()
 
 # -------------------------------
 # RUN QUERY
@@ -186,7 +218,7 @@ if run_query:
         st.warning("Please type a question.")
         st.stop()
 
-    # Build retriever — similar for all cases
+    # Build retriever — similarity for both cases
     if query_scope == "All Documents":
         retriever = vectorstore.as_retriever(
             search_type="similarity",
@@ -226,15 +258,15 @@ if run_query:
             result_holder["docs"] = []
             result_holder["done"] = True
 
-    # --- 🔧 ALWAYS normalize to list ---
+    # --- ALWAYS normalize to list ---
     if result_holder["docs"] is None:
         result_holder["docs"] = []
 
-    # --- 🔧 FIX: STOP EXECUTION IF ERROR OR NO DOCS ---
+    # --- STOP EXECUTION IF ERROR OR NO DOCS (fallback) ---
     if result_holder["error"] is not None or not result_holder["docs"]:
         st.session_state.query_result = "No information available in SOP documents."
         st.session_state.source_docs = []
-        st.stop()     # 🔧 THIS WAS THE MISSING PIECE
+        st.stop()
 
     # Deduplicate chunks
     unique_docs = []
@@ -250,11 +282,55 @@ if run_query:
 
     docs = unique_docs
 
-    # --- 🔧 STOP AGAIN IF NOTHING LEFT AFTER DEDUPE ---
+    # --- STOP AGAIN IF NOTHING LEFT AFTER DEDUPE ---
     if not docs:
         st.session_state.query_result = "No information available in SOP documents."
         st.session_state.source_docs = []
         st.stop()
+
+    # -------------------------------
+    # OUT-OF-SCOPE DETECTION (manual cosine on embeddings)
+    # -------------------------------
+    SIMILARITY_THRESHOLD = 0.55  # user requested
+
+    # compute question embedding
+    try:
+        q_vec = embeddings.embed_query(question)
+    except Exception as e:
+        # if embedding fails, fallback to normal flow (allow LLM to answer)
+        q_vec = None
+        st.warning("Warning: failed to embed question for OOS detection. Proceeding without OOS check.")
+
+    is_oos = False
+    max_sim = 0.0
+    scored_docs = []
+
+    if q_vec is not None:
+        for d in docs:
+            text = d.page_content or ""
+            try:
+                doc_vec = embeddings.embed_query(text)
+            except Exception:
+                doc_vec = None
+            sim = cosine_similarity(q_vec, doc_vec) if (doc_vec is not None) else 0.0
+            scored_docs.append((d, sim))
+            if sim > max_sim:
+                max_sim = sim
+
+        # if highest similarity below threshold -> treat as out-of-scope
+        if max_sim < SIMILARITY_THRESHOLD:
+            is_oos = True
+
+    # If out-of-scope -> fallback answer and stop
+    if is_oos:
+        st.session_state.query_result = "No information available in SOP documents."
+        st.session_state.source_docs = []
+        st.stop()
+
+    # If not out-of-scope, optionally reorder docs by similarity (highest first)
+    if scored_docs:
+        scored_docs.sort(key=lambda x: x[1], reverse=True)
+        docs = [sd[0] for sd in scored_docs]
 
     # Build context
     context_text = "\n\n".join([d.page_content for d in docs])
@@ -281,4 +357,3 @@ if st.session_state.query_result is not None:
         st.subheader("📌 Source Chunks")
         for d in st.session_state.source_docs:
             st.write(d.page_content[:500])
-
