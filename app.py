@@ -186,7 +186,7 @@ if run_query:
         st.warning("Please type a question.")
         st.stop()
 
-    # Build retriever — use similarity for both cases to avoid hybrid JSON issue
+    # Build retriever — similar for all cases
     if query_scope == "All Documents":
         retriever = vectorstore.as_retriever(
             search_type="similarity",
@@ -200,7 +200,7 @@ if run_query:
 
     retriever.k = 5
 
-    # Timeout + retrieval in background thread
+    # Timeout + retrieval thread
     result_holder = {"docs": None, "error": None, "done": False}
 
     def retrieve():
@@ -215,65 +215,60 @@ if run_query:
         t = threading.Thread(target=retrieve)
         t.start()
 
-        # Poll until done or timeout (7 seconds)
         start_t = time.time()
         while time.time() - start_t < 7:
             if result_holder["done"]:
                 break
             time.sleep(0.1)
 
-        # If still not done -> timeout
         if not result_holder["done"]:
             result_holder["error"] = TimeoutError("Retriever timed out")
             result_holder["docs"] = []
             result_holder["done"] = True
 
-    # Safety: ensure docs is a list
+    # --- 🔧 ALWAYS normalize to list ---
     if result_holder["docs"] is None:
         result_holder["docs"] = []
 
-    # If retriever errored or returned no docs -> fallback answer
+    # --- 🔧 FIX: STOP EXECUTION IF ERROR OR NO DOCS ---
     if result_holder["error"] is not None or not result_holder["docs"]:
-        # set fallback answer; no st.stop so UI will render immediately
         st.session_state.query_result = "No information available in SOP documents."
         st.session_state.source_docs = []
-    else:
-        # Deduplicate retrieved chunks
-        unique_docs = []
-        seen = set()
-        for d in result_holder["docs"]:
-            content = getattr(d, "page_content", None) or getattr(d, "content", None) or ""
-            snip = content[:200]
-            if snip not in seen:
-                seen.add(snip)
-                # normalize
-                if not getattr(d, "page_content", None) and getattr(d, "content", None):
-                    d.page_content = d.content
-                unique_docs.append(d)
+        st.stop()     # 🔧 THIS WAS THE MISSING PIECE
 
-        docs = unique_docs
+    # Deduplicate chunks
+    unique_docs = []
+    seen = set()
+    for d in result_holder["docs"]:
+        content = getattr(d, "page_content", None) or getattr(d, "content", None) or ""
+        snip = content[:200]
+        if snip not in seen:
+            seen.add(snip)
+            if not getattr(d, "page_content", None) and getattr(d, "content", None):
+                d.page_content = d.content
+            unique_docs.append(d)
 
-        # If no docs after dedupe
-        if not docs:
-            st.session_state.query_result = "No information available in SOP documents."
-            st.session_state.source_docs = []
-        else:
-            # Build context
-            context_text = "\n\n".join([d.page_content for d in docs])
+    docs = unique_docs
 
-            # Optional small debug line (comment out if noisy)
-            # st.write(f"Retrieved {len(docs)} chunk(s) — sending to LLM.")
+    # --- 🔧 STOP AGAIN IF NOTHING LEFT AFTER DEDUPE ---
+    if not docs:
+        st.session_state.query_result = "No information available in SOP documents."
+        st.session_state.source_docs = []
+        st.stop()
 
-            # Invoke LLM
-            final_prompt = RAG_PROMPT.format(context=context_text, question=question)
-            try:
-                llm_answer = llm.invoke(final_prompt).content
-            except Exception as e:
-                st.error(f"LLM call error: {e}")
-                llm_answer = "No information available in SOP documents."
+    # Build context
+    context_text = "\n\n".join([d.page_content for d in docs])
 
-            st.session_state.query_result = llm_answer
-            st.session_state.source_docs = docs
+    # LLM call
+    final_prompt = RAG_PROMPT.format(context=context_text, question=question)
+    try:
+        llm_answer = llm.invoke(final_prompt).content
+    except Exception as e:
+        st.error(f"LLM call error: {e}")
+        llm_answer = "No information available in SOP documents."
+
+    st.session_state.query_result = llm_answer
+    st.session_state.source_docs = docs
 
 # -------------------------------
 # SHOW OUTPUT
@@ -286,3 +281,4 @@ if st.session_state.query_result is not None:
         st.subheader("📌 Source Chunks")
         for d in st.session_state.source_docs:
             st.write(d.page_content[:500])
+
