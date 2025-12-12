@@ -68,7 +68,7 @@ llm = AzureChatOpenAI(
     azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,
     api_version="2024-02-15-preview",
     temperature=0,
-    max_tokens=500
+    max_tokens=2000
 )
 
 embeddings = AzureOpenAIEmbeddings(
@@ -341,3 +341,4 @@ if st.session_state.get("query_result") is not None:
         st.subheader("📌 Source Chunks")
         for d in st.session_state.source_docs:
             st.write(d.page_content[:500])
+
