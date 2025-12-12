@@ -3,7 +3,7 @@ import os
 import threading
 import time
 
-# Remove corporate proxies
+# Remove proxies
 for proxy in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]:
     os.environ.pop(proxy, None)
 
@@ -19,9 +19,9 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.prompts import PromptTemplate
 
 
-# -------------------------------
+# -----------------------
 # ENVIRONMENT VARIABLES
-# -------------------------------
+# -----------------------
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
@@ -34,20 +34,21 @@ AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 AZURE_BLOB_CONNECTION_STRING = os.getenv("AZURE_BLOB_CONNECTION_STRING")
 AZURE_BLOB_CONTAINER_NAME = os.getenv("AZURE_BLOB_CONTAINER_NAME", "smartassistant-index")
 
+# Validate envs
 if not all([
     AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT_NAME,
     AZURE_SEARCH_ENDPOINT, AZURE_SEARCH_ADMIN_KEY, AZURE_SEARCH_INDEX_NAME,
     AZURE_BLOB_CONNECTION_STRING
 ]):
-    st.error("🚨 Missing required environment variables. Please verify your environment settings.")
+    st.error("❌ Missing required environment variables.")
     st.stop()
 
 
-# -------------------------------
+# -----------------------
 # CLIENT INIT
-# -------------------------------
-blob_service_client = BlobServiceClient.from_connection_string(AZURE_BLOB_CONNECTION_STRING)
-blob_container_client = blob_service_client.get_container_client(AZURE_BLOB_CONTAINER_NAME)
+# -----------------------
+blob_client = BlobServiceClient.from_connection_string(AZURE_BLOB_CONNECTION_STRING)
+container_client = blob_client.get_container_client(AZURE_BLOB_CONTAINER_NAME)
 
 search_client = SearchClient(
     endpoint=AZURE_SEARCH_ENDPOINT,
@@ -78,17 +79,16 @@ vectorstore = AzureSearch(
     embedding_function=embeddings.embed_query
 )
 
-# -------------------------------
+
+# -----------------------
 # RAG PROMPT
-# -------------------------------
+# -----------------------
 RAG_PROMPT = PromptTemplate(
     input_variables=["context", "question"],
     template="""
-You are an AI assistant that answers questions using ONLY the information in the provided context.
-
-If the exact answer is NOT stated in the context:
-- Provide an estimation OR inference ONLY if context is relevant.
-- Otherwise, reply: "No information available in SOP documents."
+You answer ONLY using the context below.
+If no relevant information exists, reply:
+"No information available in SOP documents."
 
 Context:
 {context}
@@ -100,34 +100,32 @@ Answer:
 """
 )
 
-# -------------------------------
-# STREAMLIT UI
-# -------------------------------
+
+# -----------------------
+# UI
+# -----------------------
 st.title("🤖 SmartAssistantApp: SOP GenAI")
-st.markdown("Upload SOP documents and query them using AI-powered search.")
 
 
-# -------------------------------
-# UPLOAD & INDEX
-# -------------------------------
-st.header("📄 Upload New SOP Document")
+# -----------------------
+# UPLOAD
+# -----------------------
 uploaded_file = st.file_uploader("Upload SOP (PDF, TXT, DOCX)", type=["pdf", "txt", "docx"])
 
 if uploaded_file:
     file_name = uploaded_file.name
-    extension = file_name.split(".")[-1].lower()
+    ext = file_name.split(".")[-1].lower()
 
     local_path = f"/tmp/{file_name}"
     with open(local_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    blob_container_client.upload_blob(file_name, uploaded_file, overwrite=True)
-    st.success(f"Uploaded `{file_name}` to Azure Blob Storage.")
+    container_client.upload_blob(file_name, uploaded_file, overwrite=True)
+    st.success(f"Uploaded: {file_name}")
 
-    # Loader selection
-    if extension == "pdf":
+    if ext == "pdf":
         loader = PyPDFLoader(local_path)
-    elif extension == "txt":
+    elif ext == "txt":
         loader = TextLoader(local_path)
     else:
         loader = UnstructuredFileLoader(local_path)
@@ -141,22 +139,22 @@ if uploaded_file:
             d.metadata = {"file_name": file_name}
 
         vectorstore.add_documents(docs)
-        st.success(f"Indexed `{file_name}` with {len(docs)} chunks.")
+        st.success(f"Indexed {len(docs)} chunks.")
     except Exception as e:
-        st.error(f"Error indexing document: {e}")
+        st.error(f"Indexing error: {e}")
 
 
-# -------------------------------
-# SHOW AVAILABLE DOCUMENTS
-# -------------------------------
+# -----------------------
+# SHOW DOCUMENTS
+# -----------------------
 st.header("📄 Available SOP Files")
-blobs = [b.name for b in blob_container_client.list_blobs()]
-st.write(blobs if blobs else "No documents uploaded yet.")
+blobs = [b.name for b in container_client.list_blobs()]
+st.write(blobs or "No documents uploaded yet.")
 
 
-# -------------------------------
-# QUERY SECTION
-# -------------------------------
+# -----------------------
+# QUERY
+# -----------------------
 st.header("🔍 Query SOP Documents")
 
 if "query_result" not in st.session_state:
@@ -169,31 +167,28 @@ question = st.text_input("Enter your question:", key="user_question")
 
 col1, col2 = st.columns(2)
 run_query = col1.button("Run Query")
-reset_query = col2.button("Reset")
+reset_btn = col2.button("Reset")
 
-# -------------------------------
-# FIXED RESET
-# -------------------------------
-if reset_query:
+# -----------------------
+# FIX RESET BUTTON
+# -----------------------
+if reset_btn:
     st.session_state.clear()
-    st.experimental_rerun()
+    st.rerun()      # Correct API for modern Streamlit
 
 
-# -------------------------------
-# RUN QUERY LOGIC
-# -------------------------------
+# -----------------------
+# RUN QUERY
+# -----------------------
 if run_query:
 
     if not question.strip():
-        st.warning("Please type a question.")
+        st.warning("Please enter a question.")
         st.stop()
 
-    # Retriever selection
+    # Choose retriever
     if query_scope == "All Documents":
-        retriever = vectorstore.as_retriever(
-            search_type="similarity",
-            search_kwargs={}
-        )
+        retriever = vectorstore.as_retriever(search_type="similarity")
     else:
         retriever = vectorstore.as_retriever(
             search_type="similarity",
@@ -202,7 +197,6 @@ if run_query:
 
     retriever.k = 5
 
-    # Threaded timeout
     result_holder = {"docs": None, "error": None, "done": False}
 
     def retrieve():
@@ -210,8 +204,7 @@ if run_query:
             result_holder["docs"] = retriever.get_relevant_documents(question)
         except Exception as e:
             result_holder["error"] = e
-        finally:
-            result_holder["done"] = True
+        result_holder["done"] = True
 
     with st.spinner("Searching SOPs..."):
         t = threading.Thread(target=retrieve)
@@ -224,59 +217,57 @@ if run_query:
             time.sleep(0.1)
 
         if not result_holder["done"]:
-            result_holder["error"] = TimeoutError("Retriever timeout")
             result_holder["docs"] = []
+            result_holder["error"] = TimeoutError("Timed out")
             result_holder["done"] = True
 
-    # Normalize
     docs_raw = result_holder["docs"] or []
 
-    # -------------------------------
-    # STRICT OUT-OF-SCOPE FILTERING
-    # -------------------------------
-    safe_docs = []
+    # -----------------------
+    # STRICT OUT OF SCOPE CHECK
+    # -----------------------
+    filtered_docs = []
     for d in docs_raw:
-        score = d.metadata.get("@search.score", 0)
-        if score >= 0.55:
-            safe_docs.append(d)
+        sc = d.metadata.get("@search.score", 0)
+        if sc >= 0.55:        # threshold
+            filtered_docs.append(d)
 
-    if not safe_docs:
+    if not filtered_docs:
         st.session_state.query_result = "No information available in SOP documents."
         st.session_state.source_docs = []
         st.stop()
 
-    # Deduplication
+    # Deduplicate
+    unique = []
     seen = set()
-    unique_docs = []
-    for d in safe_docs:
-        snippet = d.page_content[:200]
-        if snippet not in seen:
-            seen.add(snippet)
-            unique_docs.append(d)
+    for d in filtered_docs:
+        snip = d.page_content[:200]
+        if snip not in seen:
+            seen.add(snip)
+            unique.append(d)
 
-    if not unique_docs:
+    if not unique:
         st.session_state.query_result = "No information available in SOP documents."
         st.session_state.source_docs = []
         st.stop()
 
-    # Build context
-    context = "\n\n".join([d.page_content for d in unique_docs])
+    context = "\n\n".join([d.page_content for d in unique])
 
-    # LLM call
-    prompt = RAG_PROMPT.format(context=context, question=question)
     try:
-        llm_answer = llm.invoke(prompt).content
-    except Exception:
-        llm_answer = "No information available in SOP documents."
+        answer = llm.invoke(
+            RAG_PROMPT.format(context=context, question=question)
+        ).content
+    except:
+        answer = "No information available in SOP documents."
 
-    st.session_state.query_result = llm_answer
-    st.session_state.source_docs = unique_docs
+    st.session_state.query_result = answer
+    st.session_state.source_docs = unique
 
 
-# -------------------------------
-# SHOW OUTPUT
-# -------------------------------
-if st.session_state.query_result is not None:
+# -----------------------
+# OUTPUT
+# -----------------------
+if st.session_state.query_result:
     st.subheader("📝 Answer")
     st.write(st.session_state.query_result)
 
