@@ -18,12 +18,6 @@ from langchain_community.document_loaders import PyPDFLoader, TextLoader, Unstru
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.prompts import PromptTemplate
 
-# try numpy, fallback to pure python
-try:
-    import numpy as np
-    _HAS_NUMPY = True
-except Exception:
-    _HAS_NUMPY = False
 
 # -------------------------------
 # ENVIRONMENT VARIABLES
@@ -47,6 +41,7 @@ if not all([
 ]):
     st.error("🚨 Missing required environment variables. Please verify your environment settings.")
     st.stop()
+
 
 # -------------------------------
 # CLIENT INIT
@@ -91,14 +86,9 @@ RAG_PROMPT = PromptTemplate(
     template="""
 You are an AI assistant that answers questions using ONLY the information in the provided context.
 
-If the exact answer is NOT stated in the context, you may:
-- Provide an estimation based on available info, OR  
-- Infer the answer
-
-…but you MUST clearly state it is an estimation.
-
-If no relevant information exists, reply:
-"No information available in SOP documents."
+If the exact answer is NOT stated in the context:
+- Provide an estimation OR inference ONLY if context is relevant.
+- Otherwise, reply: "No information available in SOP documents."
 
 Context:
 {context}
@@ -111,33 +101,11 @@ Answer:
 )
 
 # -------------------------------
-# small helper: cosine similarity
-# -------------------------------
-def cosine_similarity(a, b):
-    # a, b: lists or numpy arrays
-    if a is None or b is None:
-        return 0.0
-    if _HAS_NUMPY:
-        a_np = np.array(a, dtype=float)
-        b_np = np.array(b, dtype=float)
-        denom = (np.linalg.norm(a_np) * np.linalg.norm(b_np)) + 1e-12
-        return float(np.dot(a_np, b_np) / denom)
-    else:
-        # pure python fallback
-        try:
-            dot = sum(x * y for x, y in zip(a, b))
-            norm_a = sum(x * x for x in a) ** 0.5
-            norm_b = sum(y * y for y in b) ** 0.5
-            denom = (norm_a * norm_b) + 1e-12
-            return dot / denom
-        except Exception:
-            return 0.0
-
-# -------------------------------
 # STREAMLIT UI
 # -------------------------------
 st.title("🤖 SmartAssistantApp: SOP GenAI")
 st.markdown("Upload SOP documents and query them using AI-powered search.")
+
 
 # -------------------------------
 # UPLOAD & INDEX
@@ -156,7 +124,7 @@ if uploaded_file:
     blob_container_client.upload_blob(file_name, uploaded_file, overwrite=True)
     st.success(f"Uploaded `{file_name}` to Azure Blob Storage.")
 
-    # choose loader
+    # Loader selection
     if extension == "pdf":
         loader = PyPDFLoader(local_path)
     elif extension == "txt":
@@ -177,12 +145,14 @@ if uploaded_file:
     except Exception as e:
         st.error(f"Error indexing document: {e}")
 
+
 # -------------------------------
-# LIST FILES
+# SHOW AVAILABLE DOCUMENTS
 # -------------------------------
 st.header("📄 Available SOP Files")
 blobs = [b.name for b in blob_container_client.list_blobs()]
 st.write(blobs if blobs else "No documents uploaded yet.")
+
 
 # -------------------------------
 # QUERY SECTION
@@ -201,16 +171,16 @@ col1, col2 = st.columns(2)
 run_query = col1.button("Run Query")
 reset_query = col2.button("Reset")
 
+# -------------------------------
+# FIXED RESET
+# -------------------------------
 if reset_query:
-    st.session_state.query_result = None
-    st.session_state.source_docs = None
-    # safe reset for the text box
-    st.session_state["user_question"] = ""
-    st.success("Query reset successfully.")
+    st.session_state.clear()
     st.experimental_rerun()
 
+
 # -------------------------------
-# RUN QUERY
+# RUN QUERY LOGIC
 # -------------------------------
 if run_query:
 
@@ -218,7 +188,7 @@ if run_query:
         st.warning("Please type a question.")
         st.stop()
 
-    # Build retriever — similarity for both cases
+    # Retriever selection
     if query_scope == "All Documents":
         retriever = vectorstore.as_retriever(
             search_type="similarity",
@@ -232,7 +202,7 @@ if run_query:
 
     retriever.k = 5
 
-    # Timeout + retrieval thread
+    # Threaded timeout
     result_holder = {"docs": None, "error": None, "done": False}
 
     def retrieve():
@@ -247,104 +217,61 @@ if run_query:
         t = threading.Thread(target=retrieve)
         t.start()
 
-        start_t = time.time()
-        while time.time() - start_t < 7:
+        start = time.time()
+        while time.time() - start < 8:
             if result_holder["done"]:
                 break
             time.sleep(0.1)
 
         if not result_holder["done"]:
-            result_holder["error"] = TimeoutError("Retriever timed out")
+            result_holder["error"] = TimeoutError("Retriever timeout")
             result_holder["docs"] = []
             result_holder["done"] = True
 
-    # --- ALWAYS normalize to list ---
-    if result_holder["docs"] is None:
-        result_holder["docs"] = []
+    # Normalize
+    docs_raw = result_holder["docs"] or []
 
-    # --- STOP EXECUTION IF ERROR OR NO DOCS (fallback) ---
-    if result_holder["error"] is not None or not result_holder["docs"]:
+    # -------------------------------
+    # STRICT OUT-OF-SCOPE FILTERING
+    # -------------------------------
+    safe_docs = []
+    for d in docs_raw:
+        score = d.metadata.get("@search.score", 0)
+        if score >= 0.55:
+            safe_docs.append(d)
+
+    if not safe_docs:
         st.session_state.query_result = "No information available in SOP documents."
         st.session_state.source_docs = []
         st.stop()
 
-    # Deduplicate chunks
-    unique_docs = []
+    # Deduplication
     seen = set()
-    for d in result_holder["docs"]:
-        content = getattr(d, "page_content", None) or getattr(d, "content", None) or ""
-        snip = content[:200]
-        if snip not in seen:
-            seen.add(snip)
-            if not getattr(d, "page_content", None) and getattr(d, "content", None):
-                d.page_content = d.content
+    unique_docs = []
+    for d in safe_docs:
+        snippet = d.page_content[:200]
+        if snippet not in seen:
+            seen.add(snippet)
             unique_docs.append(d)
 
-    docs = unique_docs
-
-    # --- STOP AGAIN IF NOTHING LEFT AFTER DEDUPE ---
-    if not docs:
+    if not unique_docs:
         st.session_state.query_result = "No information available in SOP documents."
         st.session_state.source_docs = []
         st.stop()
-
-    # -------------------------------
-    # OUT-OF-SCOPE DETECTION (manual cosine on embeddings)
-    # -------------------------------
-    SIMILARITY_THRESHOLD = 0.55  # user requested
-
-    # compute question embedding
-    try:
-        q_vec = embeddings.embed_query(question)
-    except Exception as e:
-        # if embedding fails, fallback to normal flow (allow LLM to answer)
-        q_vec = None
-        st.warning("Warning: failed to embed question for OOS detection. Proceeding without OOS check.")
-
-    is_oos = False
-    max_sim = 0.0
-    scored_docs = []
-
-    if q_vec is not None:
-        for d in docs:
-            text = d.page_content or ""
-            try:
-                doc_vec = embeddings.embed_query(text)
-            except Exception:
-                doc_vec = None
-            sim = cosine_similarity(q_vec, doc_vec) if (doc_vec is not None) else 0.0
-            scored_docs.append((d, sim))
-            if sim > max_sim:
-                max_sim = sim
-
-        # if highest similarity below threshold -> treat as out-of-scope
-        if max_sim < SIMILARITY_THRESHOLD:
-            is_oos = True
-
-    # If out-of-scope -> fallback answer and stop
-    if is_oos:
-        st.session_state.query_result = "No information available in SOP documents."
-        st.session_state.source_docs = []
-        st.stop()
-
-    # If not out-of-scope, optionally reorder docs by similarity (highest first)
-    if scored_docs:
-        scored_docs.sort(key=lambda x: x[1], reverse=True)
-        docs = [sd[0] for sd in scored_docs]
 
     # Build context
-    context_text = "\n\n".join([d.page_content for d in docs])
+    context = "\n\n".join([d.page_content for d in unique_docs])
 
     # LLM call
-    final_prompt = RAG_PROMPT.format(context=context_text, question=question)
+    prompt = RAG_PROMPT.format(context=context, question=question)
     try:
-        llm_answer = llm.invoke(final_prompt).content
-    except Exception as e:
-        st.error(f"LLM call error: {e}")
+        llm_answer = llm.invoke(prompt).content
+    except Exception:
         llm_answer = "No information available in SOP documents."
 
     st.session_state.query_result = llm_answer
-    st.session_state.source_docs = docs
+    st.session_state.source_docs = unique_docs
+
 
 # -------------------------------
 # SHOW OUTPUT
