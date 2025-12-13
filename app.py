@@ -1,6 +1,5 @@
 import streamlit as st
 import os
-import re
 
 # -------------------------------
 # REMOVE PROXIES
@@ -74,14 +73,14 @@ vectorstore = AzureSearch(
 )
 
 # -------------------------------
-# PROMPT (RAG)
+# PROMPT
 # -------------------------------
 RAG_PROMPT = PromptTemplate(
     input_variables=["context", "question"],
     template="""
-You are an AI assistant that answers strictly from SOP context.
+You are an AI assistant that answers strictly from SOP documents.
 
-If the context does not contain the answer, reply exactly:
+If the answer is not present in the provided context, reply exactly:
 "No information available in SOP documents."
 
 Context:
@@ -97,39 +96,34 @@ Answer:
 # -------------------------------
 # HELPERS
 # -------------------------------
-SIMILARITY_THRESHOLD = 0.2
-
 def dedupe_docs(docs):
     seen = set()
     unique = []
     for d in docs:
-        key = d.page_content[:150]
+        key = d.page_content[:200]
         if key not in seen:
             seen.add(key)
             unique.append(d)
     return unique
 
-def safe_vector_search(query, scope):
-    try:
-        if scope == "All Documents":
-            results = vectorstore.similarity_search_with_score(query, k=6)
-        else:
-            results = vectorstore.similarity_search_with_score(
-                query,
-                k=6,
-                filters=f"file_name eq '{scope}'"
-            )
-    except Exception:
-        return []
-
-    # 🔧 FIX: apply threshold ONLY for All Documents
+def vector_search(query, scope):
     if scope == "All Documents":
-        docs = [doc for doc, score in results if score <= SIMILARITY_THRESHOLD]
+        results = vectorstore.similarity_search_with_score(query, k=6)
     else:
-        docs = [doc for doc, _ in results]  # trust user-selected scope
+        results = vectorstore.similarity_search_with_score(
+            query,
+            k=6,
+            filters=f"file_name eq '{scope}'"
+        )
+    return dedupe_docs([doc for doc, _ in results])
 
-    return dedupe_docs(docs)
-
+# -------------------------------
+# SESSION STATE
+# -------------------------------
+if "answer" not in st.session_state:
+    st.session_state.answer = None
+if "sources" not in st.session_state:
+    st.session_state.sources = []
 
 # -------------------------------
 # UI
@@ -171,14 +165,12 @@ if file:
 # -------------------------------
 st.header("📂 SOP Files")
 files = [b.name for b in container.list_blobs()]
-selected_delete = st.selectbox("Select file to delete", [""] + files)
 
-if st.button("🗑️ Delete Selected File") and selected_delete:
-    container.delete_blob(selected_delete)
-    search_client.delete_documents(
-        documents=[{"file_name": selected_delete}]
-    )
-    st.success(f"Deleted {selected_delete}")
+delete_file = st.selectbox("Select file to delete", [""] + files)
+if st.button("🗑️ Delete Selected File") and delete_file:
+    container.delete_blob(delete_file)
+    search_client.delete_documents(documents=[{"file_name": delete_file}])
+    st.success(f"Deleted {delete_file}")
     st.stop()
 
 # -------------------------------
@@ -193,29 +185,31 @@ col1, col2 = st.columns(2)
 
 if col1.button("Run Query"):
     with st.spinner("Searching SOPs…"):
-        docs = safe_vector_search(question, scope)
+        docs = vector_search(question, scope)
 
     if not docs:
-        st.subheader("📝 Answer")
-        st.write("No information available in SOP documents.")
-        st.stop()
-
-    context = "\n\n".join(d.page_content for d in docs)
-
-    answer = llm.invoke(
-        RAG_PROMPT.format(context=context, question=question)
-    ).content
-
-    st.subheader("📝 Answer")
-    st.write(answer)
-
-    st.subheader("📌 Source Chunks")
-    for d in docs:
-        st.write(d.page_content[:400])
+        st.session_state.answer = "No information available in SOP documents."
+        st.session_state.sources = []
+    else:
+        context = "\n\n".join(d.page_content for d in docs)
+        st.session_state.answer = llm.invoke(
+            RAG_PROMPT.format(context=context, question=question)
+        ).content
+        st.session_state.sources = docs
 
 if col2.button("Reset"):
-    st.session_state.clear()
-    st.experimental_rerun()
+    st.session_state.answer = None
+    st.session_state.sources = []
+    st.rerun()
 
+# -------------------------------
+# OUTPUT
+# -------------------------------
+if st.session_state.answer is not None:
+    st.subheader("📝 Answer")
+    st.write(st.session_state.answer)
 
-
+    if st.session_state.sources:
+        st.subheader("📌 Source Chunks")
+        for d in st.session_state.sources:
+            st.write(d.page_content[:400])
