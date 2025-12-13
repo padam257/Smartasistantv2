@@ -33,14 +33,18 @@ from langchain_core.prompts import PromptTemplate
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME = os.getenv(
+    "AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"
+)
 
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_ADMIN_KEY = os.getenv("AZURE_SEARCH_ADMIN_KEY")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
 AZURE_BLOB_CONNECTION_STRING = os.getenv("AZURE_BLOB_CONNECTION_STRING")
-AZURE_BLOB_CONTAINER_NAME = os.getenv("AZURE_BLOB_CONTAINER_NAME", "smartassistant-index")
+AZURE_BLOB_CONTAINER_NAME = os.getenv(
+    "AZURE_BLOB_CONTAINER_NAME", "smartassistant-index"
+)
 
 if not all([
     AZURE_OPENAI_API_KEY,
@@ -56,7 +60,7 @@ if not all([
     st.stop()
 
 # -------------------------------
-# CLIENTS
+# CLIENT INIT
 # -------------------------------
 blob_service_client = BlobServiceClient.from_connection_string(
     AZURE_BLOB_CONNECTION_STRING
@@ -119,17 +123,12 @@ Answer:
 )
 
 # -------------------------------
-# CONSTANTS
-# -------------------------------
-SIMILARITY_THRESHOLD = 0.55
-
-# -------------------------------
 # UI
 # -------------------------------
 st.title("🤖 SmartAssistantApp – SOP GenAI")
 
 # -------------------------------
-# UPLOAD
+# UPLOAD SECTION
 # -------------------------------
 st.header("📄 Upload SOP Document")
 uploaded_file = st.file_uploader(
@@ -144,7 +143,10 @@ if uploaded_file:
     with open(local_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    blob_container_client.upload_blob(file_name, uploaded_file, overwrite=True)
+    blob_container_client.upload_blob(
+        file_name, uploaded_file, overwrite=True
+    )
+    st.success(f"Uploaded `{file_name}`")
 
     if ext == "pdf":
         loader = PyPDFLoader(local_path)
@@ -154,7 +156,9 @@ if uploaded_file:
         loader = UnstructuredFileLoader(local_path)
 
     docs_raw = loader.load()
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000, chunk_overlap=200
+    )
     docs = splitter.split_documents(docs_raw)
 
     for d in docs:
@@ -164,24 +168,21 @@ if uploaded_file:
     st.success(f"Indexed `{file_name}` ({len(docs)} chunks)")
 
 # -------------------------------
-# FILE LIST + DELETE
+# FILE LIST
 # -------------------------------
 st.header("📂 Available SOP Files")
 blobs = [b.name for b in blob_container_client.list_blobs()]
-
-if blobs:
-    delete_file = st.selectbox("Delete SOP document:", ["-- Select --"] + blobs)
-    if st.button("Delete Selected File") and delete_file != "-- Select --":
-        blob_container_client.delete_blob(delete_file)
-        st.success(f"Deleted `{delete_file}`")
-        st.rerun()
-else:
-    st.write("No documents uploaded.")
+st.write(blobs if blobs else "No documents uploaded.")
 
 # -------------------------------
-# QUERY
+# QUERY SECTION
 # -------------------------------
 st.header("🔍 Query SOP Documents")
+
+if "query_result" not in st.session_state:
+    st.session_state.query_result = None
+if "source_docs" not in st.session_state:
+    st.session_state.source_docs = []
 
 scope = st.selectbox("Search Scope:", ["All Documents"] + blobs)
 question = st.text_input("Enter your question:")
@@ -190,44 +191,71 @@ col1, col2 = st.columns(2)
 run_query = col1.button("Run Query")
 reset_query = col2.button("Reset")
 
+# -------------------------------
+# RESET
+# -------------------------------
 if reset_query:
-    st.session_state.clear()
-    st.rerun()
+    st.session_state.query_result = None
+    st.session_state.source_docs = []
+    st.success("Query reset.")
+    st.stop()
 
 # -------------------------------
-# RUN QUERY
+# RUN QUERY (FIXED)
 # -------------------------------
-if run_query and question.strip():
+if run_query:
+    if not question.strip():
+        st.warning("Please enter a question.")
+        st.stop()
 
     with st.spinner("Searching SOPs…"):
         if scope == "All Documents":
-            docs_scores = vectorstore.similarity_search_with_score(question, k=5)
+            retriever = vectorstore.as_retriever(
+                search_type="similarity",
+                search_kwargs={"k": 5}
+            )
         else:
-            docs_scores = vectorstore.similarity_search_with_score(
-                question, k=5, filters=f"file_name eq '{scope}'"
+            retriever = vectorstore.as_retriever(
+                search_type="similarity",
+                search_kwargs={
+                    "k": 5,
+                    "filter": f"file_name eq '{scope}'"
+                }
             )
 
-    filtered_docs = [
-        doc for doc, score in docs_scores if score >= SIMILARITY_THRESHOLD
-    ]
+        docs = retriever.get_relevant_documents(question)
 
-    if not filtered_docs:
+    # ✅ OUT-OF-SCOPE HANDLING (deterministic)
+    if not docs:
+        st.session_state.query_result = (
+            "No information available in SOP documents."
+        )
+        st.session_state.source_docs = []
+        st.stop()
+
+    context = "\n\n".join(d.page_content for d in docs)
+
+    try:
+        answer = llm.invoke(
+            RAG_PROMPT.format(
+                context=context,
+                question=question
+            )
+        ).content
+    except Exception:
         answer = "No information available in SOP documents."
-        sources = []
-    else:
-        context = "\n\n".join(d.page_content for d in filtered_docs)
-        try:
-            answer = llm.invoke(
-                RAG_PROMPT.format(context=context, question=question)
-            ).content
-        except Exception:
-            answer = "No information available in SOP documents."
-        sources = filtered_docs
 
+    st.session_state.query_result = answer
+    st.session_state.source_docs = docs
+
+# -------------------------------
+# OUTPUT
+# -------------------------------
+if st.session_state.query_result is not None:
     st.subheader("📝 Answer")
-    st.write(answer)
+    st.write(st.session_state.query_result)
 
-    if sources:
+    if st.session_state.source_docs:
         st.subheader("📌 Source Chunks")
-        for d in sources:
+        for d in st.session_state.source_docs:
             st.write(d.page_content[:500])
