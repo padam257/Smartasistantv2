@@ -211,32 +211,39 @@ if reset_query:
 # -------------------------------
 # RUN QUERY
 # -------------------------------
+# RUN QUERY
+# -------------------------------
 if run_query:
     if not question.strip():
         st.warning("Please enter a question.")
         st.stop()
 
     with st.spinner("Searching SOPs…"):
-        docs_with_scores = vectorstore.similarity_search_with_score(
-            question,
-            k=5,
-            filter=None if scope == "All Documents"
-            else f"file_name eq '{scope}'"
-        )
+        if scope == "All Documents":
+            docs_with_scores = vectorstore.similarity_search_with_score(
+                question,
+                k=5
+            )
+        else:
+            docs_with_scores = vectorstore.similarity_search_with_score(
+                question,
+                k=5,
+                filters=f"file_name eq '{scope}'"   # ✅ FIX
+            )
 
-    # Threshold filter
+    # Apply similarity threshold
     filtered_docs = [
         doc for doc, score in docs_with_scores
         if score >= SIMILARITY_THRESHOLD
     ]
 
-    # Additional numeric signal filter for infra questions
+    # Optional numeric-signal check (infra sizing questions)
     filtered_docs = [
         d for d in filtered_docs
         if has_numeric_signal(d.page_content)
     ]
 
-    # OUT-OF-SCOPE
+    # OUT-OF-SCOPE HANDLING (deterministic)
     if not filtered_docs:
         st.session_state.query_result = (
             "No information available in SOP documents."
@@ -270,3 +277,4 @@ if st.session_state.query_result is not None:
         st.subheader("📌 Source Chunks (top results)")
         for d in st.session_state.source_docs:
             st.write(d.page_content[:500])
+
