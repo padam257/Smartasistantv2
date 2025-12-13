@@ -3,14 +3,10 @@ import os
 import re
 
 # -------------------------------
-# REMOVE CORPORATE PROXIES
+# REMOVE PROXIES
 # -------------------------------
-for proxy in [
-    "HTTP_PROXY", "HTTPS_PROXY",
-    "http_proxy", "https_proxy",
-    "ALL_PROXY", "all_proxy"
-]:
-    os.environ.pop(proxy, None)
+for p in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]:
+    os.environ.pop(p, None)
 
 # -------------------------------
 # IMPORTS
@@ -33,46 +29,25 @@ from langchain_core.prompts import PromptTemplate
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME = os.getenv(
-    "AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"
-)
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")
 
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_ADMIN_KEY = os.getenv("AZURE_SEARCH_ADMIN_KEY")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
 AZURE_BLOB_CONNECTION_STRING = os.getenv("AZURE_BLOB_CONNECTION_STRING")
-AZURE_BLOB_CONTAINER_NAME = os.getenv(
-    "AZURE_BLOB_CONTAINER_NAME", "smartassistant-index"
-)
-
-if not all([
-    AZURE_OPENAI_API_KEY,
-    AZURE_OPENAI_ENDPOINT,
-    AZURE_OPENAI_DEPLOYMENT_NAME,
-    AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME,
-    AZURE_SEARCH_ENDPOINT,
-    AZURE_SEARCH_ADMIN_KEY,
-    AZURE_SEARCH_INDEX_NAME,
-    AZURE_BLOB_CONNECTION_STRING
-]):
-    st.error("🚨 Missing required environment variables.")
-    st.stop()
+AZURE_BLOB_CONTAINER_NAME = os.getenv("AZURE_BLOB_CONTAINER_NAME", "smartassistant-index")
 
 # -------------------------------
-# CLIENT INIT
+# CLIENTS
 # -------------------------------
-blob_service_client = BlobServiceClient.from_connection_string(
-    AZURE_BLOB_CONNECTION_STRING
-)
-blob_container_client = blob_service_client.get_container_client(
-    AZURE_BLOB_CONTAINER_NAME
-)
+blob_client = BlobServiceClient.from_connection_string(AZURE_BLOB_CONNECTION_STRING)
+container = blob_client.get_container_client(AZURE_BLOB_CONTAINER_NAME)
 
 search_client = SearchClient(
-    endpoint=AZURE_SEARCH_ENDPOINT,
-    index_name=AZURE_SEARCH_INDEX_NAME,
-    credential=AzureKeyCredential(AZURE_SEARCH_ADMIN_KEY)
+    AZURE_SEARCH_ENDPOINT,
+    AZURE_SEARCH_INDEX_NAME,
+    AzureKeyCredential(AZURE_SEARCH_ADMIN_KEY)
 )
 
 llm = AzureChatOpenAI(
@@ -99,18 +74,15 @@ vectorstore = AzureSearch(
 )
 
 # -------------------------------
-# PROMPT
+# PROMPT (RAG)
 # -------------------------------
 RAG_PROMPT = PromptTemplate(
     input_variables=["context", "question"],
     template="""
-You are an AI assistant that answers questions strictly using the provided SOP context.
+You are an AI assistant that answers strictly from SOP context.
 
-Rules:
-- If the answer is not explicitly stated, you MAY estimate or infer.
-- If you estimate, clearly say it is an estimation.
-- If the context does not contain relevant information, reply exactly:
-  "No information available in SOP documents."
+If the context does not contain the answer, reply exactly:
+"No information available in SOP documents."
 
 Context:
 {context}
@@ -123,98 +95,99 @@ Answer:
 )
 
 # -------------------------------
+# HELPERS
+# -------------------------------
+SIMILARITY_THRESHOLD = 0.55
+
+def dedupe_docs(docs):
+    seen = set()
+    unique = []
+    for d in docs:
+        key = d.page_content[:150]
+        if key not in seen:
+            seen.add(key)
+            unique.append(d)
+    return unique
+
+def safe_vector_search(query, scope):
+    try:
+        if scope == "All Documents":
+            results = vectorstore.similarity_search_with_score(query, k=6)
+        else:
+            results = vectorstore.similarity_search_with_score(
+                query,
+                k=6,
+                filters=f"file_name eq '{scope}'"
+            )
+    except Exception:
+        return []
+
+    docs = [doc for doc, score in results if score >= SIMILARITY_THRESHOLD]
+    return dedupe_docs(docs)
+
+# -------------------------------
 # UI
 # -------------------------------
-st.title("🤖 SmartAssistantApp – SOP GenAI")
+st.title("🤖 SmartAssistant – SOP RAG")
 
 # -------------------------------
-# UPLOAD SECTION
+# UPLOAD
 # -------------------------------
-st.header("📄 Upload SOP Document")
-uploaded_file = st.file_uploader(
-    "Upload SOP (PDF, TXT, DOCX)", type=["pdf", "txt", "docx"]
-)
+st.header("📄 Upload SOP")
+file = st.file_uploader("Upload PDF / TXT / DOCX", type=["pdf", "txt", "docx"])
 
-if uploaded_file:
-    file_name = uploaded_file.name
-    ext = file_name.split(".")[-1].lower()
-    local_path = f"/tmp/{file_name}"
+if file:
+    path = f"/tmp/{file.name}"
+    with open(path, "wb") as f:
+        f.write(file.getbuffer())
 
-    with open(local_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+    container.upload_blob(file.name, file, overwrite=True)
 
-    blob_container_client.upload_blob(
-        file_name, uploaded_file, overwrite=True
+    loader = (
+        PyPDFLoader(path) if file.name.endswith("pdf")
+        else TextLoader(path) if file.name.endswith("txt")
+        else UnstructuredFileLoader(path)
     )
 
-    if ext == "pdf":
-        loader = PyPDFLoader(local_path)
-    elif ext == "txt":
-        loader = TextLoader(local_path)
-    else:
-        loader = UnstructuredFileLoader(local_path)
-
-    docs_raw = loader.load()
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000, chunk_overlap=200
-    )
-    docs = splitter.split_documents(docs_raw)
+    docs = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200
+    ).split_documents(loader.load())
 
     for d in docs:
-        d.metadata = {"file_name": file_name}
+        d.metadata = {"file_name": file.name}
 
     vectorstore.add_documents(docs)
-    st.success(f"Uploaded & indexed `{file_name}`")
+    st.success(f"Indexed {file.name}")
 
 # -------------------------------
 # FILE LIST + DELETE
 # -------------------------------
-st.header("📂 Available SOP Files")
-blobs = [b.name for b in blob_container_client.list_blobs()]
+st.header("📂 SOP Files")
+files = [b.name for b in container.list_blobs()]
+selected_delete = st.selectbox("Select file to delete", [""] + files)
 
-if blobs:
-    delete_file = st.selectbox("Select SOP to delete", [""] + blobs)
-    if st.button("🗑️ Delete SOP") and delete_file:
-        # delete from blob
-        blob_container_client.delete_blob(delete_file)
-
-        # delete from search index
-        results = search_client.search(
-            search_text="*",
-            filter=f"file_name eq '{delete_file}'",
-            select=["id"]
-        )
-        ids = [{"id": r["id"]} for r in results]
-        if ids:
-            search_client.delete_documents(ids)
-
-        st.success(f"Deleted `{delete_file}`")
-        st.experimental_rerun()
-else:
-    st.write("No documents uploaded.")
+if st.button("🗑️ Delete Selected File") and selected_delete:
+    container.delete_blob(selected_delete)
+    search_client.delete_documents(
+        documents=[{"file_name": selected_delete}]
+    )
+    st.success(f"Deleted {selected_delete}")
+    st.stop()
 
 # -------------------------------
-# QUERY SECTION
+# QUERY
 # -------------------------------
-st.header("🔍 Query SOP Documents")
-scope = st.selectbox("Search Scope:", ["All Documents"] + blobs)
-question = st.text_input("Enter your question:")
+st.header("🔍 Query SOPs")
 
-if st.button("Run Query"):
-    if not question.strip():
-        st.warning("Please enter a question.")
-        st.stop()
+scope = st.selectbox("Search Scope", ["All Documents"] + files)
+question = st.text_input("Enter your question")
 
+col1, col2 = st.columns(2)
+
+if col1.button("Run Query"):
     with st.spinner("Searching SOPs…"):
-        retriever = vectorstore.as_retriever()
-        retriever.k = 5   # ✅ FIX (ONLY place k is set)
-
-        if scope != "All Documents":
-            retriever.search_kwargs["filter"] = (
-                f"file_name eq '{scope}'"
-            )
-
-        docs = retriever.get_relevant_documents(question)
+        docs = safe_vector_search(question, scope)
 
     if not docs:
         st.subheader("📝 Answer")
@@ -224,10 +197,7 @@ if st.button("Run Query"):
     context = "\n\n".join(d.page_content for d in docs)
 
     answer = llm.invoke(
-        RAG_PROMPT.format(
-            context=context,
-            question=question
-        )
+        RAG_PROMPT.format(context=context, question=question)
     ).content
 
     st.subheader("📝 Answer")
@@ -235,4 +205,8 @@ if st.button("Run Query"):
 
     st.subheader("📌 Source Chunks")
     for d in docs:
-        st.write(d.page_content[:500])
+        st.write(d.page_content[:400])
+
+if col2.button("Reset"):
+    st.session_state.clear()
+    st.experimental_rerun()
