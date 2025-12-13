@@ -1,6 +1,5 @@
 import streamlit as st
 import os
-import time
 import re
 
 # -------------------------------
@@ -57,7 +56,7 @@ if not all([
     st.stop()
 
 # -------------------------------
-# CLIENT INIT
+# CLIENTS
 # -------------------------------
 blob_service_client = BlobServiceClient.from_connection_string(
     AZURE_BLOB_CONNECTION_STRING
@@ -120,12 +119,9 @@ Answer:
 )
 
 # -------------------------------
-# HELPERS
+# CONSTANTS
 # -------------------------------
 SIMILARITY_THRESHOLD = 0.55
-
-def has_numeric_signal(text: str) -> bool:
-    return bool(re.search(r"\d+", text))
 
 # -------------------------------
 # UI
@@ -133,7 +129,7 @@ def has_numeric_signal(text: str) -> bool:
 st.title("🤖 SmartAssistantApp – SOP GenAI")
 
 # -------------------------------
-# UPLOAD SECTION
+# UPLOAD
 # -------------------------------
 st.header("📄 Upload SOP Document")
 uploaded_file = st.file_uploader(
@@ -148,10 +144,7 @@ if uploaded_file:
     with open(local_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    blob_container_client.upload_blob(
-        file_name, uploaded_file, overwrite=True
-    )
-    st.success(f"Uploaded `{file_name}`")
+    blob_container_client.upload_blob(file_name, uploaded_file, overwrite=True)
 
     if ext == "pdf":
         loader = PyPDFLoader(local_path)
@@ -161,9 +154,7 @@ if uploaded_file:
         loader = UnstructuredFileLoader(local_path)
 
     docs_raw = loader.load()
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000, chunk_overlap=200
-    )
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     docs = splitter.split_documents(docs_raw)
 
     for d in docs:
@@ -173,23 +164,24 @@ if uploaded_file:
     st.success(f"Indexed `{file_name}` ({len(docs)} chunks)")
 
 # -------------------------------
-# FILE LIST
+# FILE LIST + DELETE
 # -------------------------------
 st.header("📂 Available SOP Files")
 blobs = [b.name for b in blob_container_client.list_blobs()]
-st.write(blobs if blobs else "No documents uploaded.")
+
+if blobs:
+    delete_file = st.selectbox("Delete SOP document:", ["-- Select --"] + blobs)
+    if st.button("Delete Selected File") and delete_file != "-- Select --":
+        blob_container_client.delete_blob(delete_file)
+        st.success(f"Deleted `{delete_file}`")
+        st.rerun()
+else:
+    st.write("No documents uploaded.")
 
 # -------------------------------
-# QUERY SECTION
+# QUERY
 # -------------------------------
 st.header("🔍 Query SOP Documents")
-
-if "query_result" not in st.session_state:
-    st.session_state.query_result = None
-if "source_docs" not in st.session_state:
-    st.session_state.source_docs = []
-if "run_id" not in st.session_state:
-    st.session_state.run_id = 0
 
 scope = st.selectbox("Search Scope:", ["All Documents"] + blobs)
 question = st.text_input("Enter your question:")
@@ -198,83 +190,44 @@ col1, col2 = st.columns(2)
 run_query = col1.button("Run Query")
 reset_query = col2.button("Reset")
 
-# -------------------------------
-# RESET (SAFE)
-# -------------------------------
 if reset_query:
-    st.session_state.query_result = None
-    st.session_state.source_docs = []
-    st.session_state.run_id += 1
-    st.success("Query reset.")
-    st.stop()
+    st.session_state.clear()
+    st.rerun()
 
 # -------------------------------
 # RUN QUERY
 # -------------------------------
-# RUN QUERY
-# -------------------------------
-if run_query:
-    if not question.strip():
-        st.warning("Please enter a question.")
-        st.stop()
+if run_query and question.strip():
 
     with st.spinner("Searching SOPs…"):
         if scope == "All Documents":
-            docs_with_scores = vectorstore.similarity_search_with_score(
-                question,
-                k=5
-            )
+            docs_scores = vectorstore.similarity_search_with_score(question, k=5)
         else:
-            docs_with_scores = vectorstore.similarity_search_with_score(
-                question,
-                k=5,
-                filters=f"file_name eq '{scope}'"   # ✅ FIX
+            docs_scores = vectorstore.similarity_search_with_score(
+                question, k=5, filters=f"file_name eq '{scope}'"
             )
 
-    # Apply similarity threshold
     filtered_docs = [
-        doc for doc, score in docs_with_scores
-        if score >= SIMILARITY_THRESHOLD
+        doc for doc, score in docs_scores if score >= SIMILARITY_THRESHOLD
     ]
 
-    # Optional numeric-signal check (infra sizing questions)
-    filtered_docs = [
-        d for d in filtered_docs
-        if has_numeric_signal(d.page_content)
-    ]
-
-    # OUT-OF-SCOPE HANDLING (deterministic)
     if not filtered_docs:
-        st.session_state.query_result = (
-            "No information available in SOP documents."
-        )
-        st.session_state.source_docs = []
-        st.stop()
-
-    context = "\n\n".join(d.page_content for d in filtered_docs)
-
-    try:
-        answer = llm.invoke(
-            RAG_PROMPT.format(
-                context=context,
-                question=question
-            )
-        ).content
-    except Exception:
         answer = "No information available in SOP documents."
+        sources = []
+    else:
+        context = "\n\n".join(d.page_content for d in filtered_docs)
+        try:
+            answer = llm.invoke(
+                RAG_PROMPT.format(context=context, question=question)
+            ).content
+        except Exception:
+            answer = "No information available in SOP documents."
+        sources = filtered_docs
 
-    st.session_state.query_result = answer
-    st.session_state.source_docs = filtered_docs
-
-# -------------------------------
-# OUTPUT
-# -------------------------------
-if st.session_state.query_result is not None:
     st.subheader("📝 Answer")
-    st.write(st.session_state.query_result)
+    st.write(answer)
 
-    if st.session_state.source_docs:
-        st.subheader("📌 Source Chunks (top results)")
-        for d in st.session_state.source_docs:
+    if sources:
+        st.subheader("📌 Source Chunks")
+        for d in sources:
             st.write(d.page_content[:500])
-
