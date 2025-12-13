@@ -80,7 +80,7 @@ RAG_PROMPT = PromptTemplate(
     template="""
 You are an AI assistant that answers strictly from SOP documents.
 
-If the answer is not present in the provided context, reply exactly:
+If the answer is not present in the context, reply exactly:
 "No information available in SOP documents."
 
 Context:
@@ -107,15 +107,19 @@ def dedupe_docs(docs):
     return unique
 
 def vector_search(query, scope):
+    """
+    PURE VECTOR SEARCH (NO HYBRID)
+    Avoids LangChain JSON metadata bug
+    """
     if scope == "All Documents":
-        results = vectorstore.similarity_search_with_score(query, k=6)
+        docs = vectorstore.vector_search(query, k=6)
     else:
-        results = vectorstore.similarity_search_with_score(
+        docs = vectorstore.vector_search(
             query,
             k=6,
             filters=f"file_name eq '{scope}'"
         )
-    return dedupe_docs([doc for doc, _ in results])
+    return dedupe_docs(docs)
 
 # -------------------------------
 # SESSION STATE
@@ -198,14 +202,13 @@ if col1.button("Run Query"):
         st.session_state.sources = docs
 
 if col2.button("Reset"):
-    st.session_state.answer = None
-    st.session_state.sources = []
+    st.session_state.clear()
     st.rerun()
 
 # -------------------------------
 # OUTPUT
 # -------------------------------
-if st.session_state.answer is not None:
+if st.session_state.answer:
     st.subheader("📝 Answer")
     st.write(st.session_state.answer)
 
