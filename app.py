@@ -146,7 +146,6 @@ if uploaded_file:
     blob_container_client.upload_blob(
         file_name, uploaded_file, overwrite=True
     )
-    st.success(f"Uploaded `{file_name}`")
 
     if ext == "pdf":
         loader = PyPDFLoader(local_path)
@@ -165,97 +164,75 @@ if uploaded_file:
         d.metadata = {"file_name": file_name}
 
     vectorstore.add_documents(docs)
-    st.success(f"Indexed `{file_name}` ({len(docs)} chunks)")
+    st.success(f"Uploaded & indexed `{file_name}`")
 
 # -------------------------------
-# FILE LIST
+# FILE LIST + DELETE
 # -------------------------------
 st.header("📂 Available SOP Files")
 blobs = [b.name for b in blob_container_client.list_blobs()]
-st.write(blobs if blobs else "No documents uploaded.")
+
+if blobs:
+    delete_file = st.selectbox("Select SOP to delete", [""] + blobs)
+    if st.button("🗑️ Delete SOP") and delete_file:
+        # delete from blob
+        blob_container_client.delete_blob(delete_file)
+
+        # delete from search index
+        results = search_client.search(
+            search_text="*",
+            filter=f"file_name eq '{delete_file}'",
+            select=["id"]
+        )
+        ids = [{"id": r["id"]} for r in results]
+        if ids:
+            search_client.delete_documents(ids)
+
+        st.success(f"Deleted `{delete_file}`")
+        st.experimental_rerun()
+else:
+    st.write("No documents uploaded.")
 
 # -------------------------------
 # QUERY SECTION
 # -------------------------------
 st.header("🔍 Query SOP Documents")
-
-if "query_result" not in st.session_state:
-    st.session_state.query_result = None
-if "source_docs" not in st.session_state:
-    st.session_state.source_docs = []
-
 scope = st.selectbox("Search Scope:", ["All Documents"] + blobs)
 question = st.text_input("Enter your question:")
 
-col1, col2 = st.columns(2)
-run_query = col1.button("Run Query")
-reset_query = col2.button("Reset")
-
-# -------------------------------
-# RESET
-# -------------------------------
-if reset_query:
-    st.session_state.query_result = None
-    st.session_state.source_docs = []
-    st.success("Query reset.")
-    st.stop()
-
-# -------------------------------
-# RUN QUERY (FIXED)
-# -------------------------------
-if run_query:
+if st.button("Run Query"):
     if not question.strip():
         st.warning("Please enter a question.")
         st.stop()
 
     with st.spinner("Searching SOPs…"):
-        if scope == "All Documents":
-            retriever = vectorstore.as_retriever(
-                search_type="similarity",
-                search_kwargs={"k": 5}
-            )
-        else:
-            retriever = vectorstore.as_retriever(
-                search_type="similarity",
-                search_kwargs={
-                    "k": 5,
-                    "filter": f"file_name eq '{scope}'"
-                }
+        retriever = vectorstore.as_retriever()
+        retriever.k = 5   # ✅ FIX (ONLY place k is set)
+
+        if scope != "All Documents":
+            retriever.search_kwargs["filter"] = (
+                f"file_name eq '{scope}'"
             )
 
         docs = retriever.get_relevant_documents(question)
 
-    # ✅ OUT-OF-SCOPE HANDLING (deterministic)
     if not docs:
-        st.session_state.query_result = (
-            "No information available in SOP documents."
-        )
-        st.session_state.source_docs = []
+        st.subheader("📝 Answer")
+        st.write("No information available in SOP documents.")
         st.stop()
 
     context = "\n\n".join(d.page_content for d in docs)
 
-    try:
-        answer = llm.invoke(
-            RAG_PROMPT.format(
-                context=context,
-                question=question
-            )
-        ).content
-    except Exception:
-        answer = "No information available in SOP documents."
+    answer = llm.invoke(
+        RAG_PROMPT.format(
+            context=context,
+            question=question
+        )
+    ).content
 
-    st.session_state.query_result = answer
-    st.session_state.source_docs = docs
-
-# -------------------------------
-# OUTPUT
-# -------------------------------
-if st.session_state.query_result is not None:
     st.subheader("📝 Answer")
-    st.write(st.session_state.query_result)
+    st.write(answer)
 
-    if st.session_state.source_docs:
-        st.subheader("📌 Source Chunks")
-        for d in st.session_state.source_docs:
-            st.write(d.page_content[:500])
+    st.subheader("📌 Source Chunks")
+    for d in docs:
+        st.write(d.page_content[:500])
