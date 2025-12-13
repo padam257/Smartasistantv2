@@ -74,7 +74,7 @@ llm = AzureChatOpenAI(
     azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,
     api_version="2024-02-15-preview",
     temperature=0,
-    max_tokens=500,
+    max_tokens=5000,
 )
 
 embeddings = AzureOpenAIEmbeddings(
@@ -428,4 +428,5 @@ if st.session_state.get("query_result") is not None:
         for idx, d in enumerate(st.session_state.source_docs, start=1):
             snippet = getattr(d, "page_content", "")[:600]
             st.write(f"{idx}. {snippet}")
+
 
