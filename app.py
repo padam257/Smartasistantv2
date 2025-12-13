@@ -97,7 +97,7 @@ Answer:
 # -------------------------------
 # HELPERS
 # -------------------------------
-SIMILARITY_THRESHOLD = 0.55
+SIMILARITY_THRESHOLD = 0.2
 
 def dedupe_docs(docs):
     seen = set()
@@ -129,6 +129,7 @@ def safe_vector_search(query, scope):
         docs = [doc for doc, _ in results]  # trust user-selected scope
 
     return dedupe_docs(docs)
+
 
 # -------------------------------
 # UI
@@ -215,5 +216,6 @@ if col1.button("Run Query"):
 if col2.button("Reset"):
     st.session_state.clear()
     st.experimental_rerun()
+
 
 
