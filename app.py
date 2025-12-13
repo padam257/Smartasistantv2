@@ -122,7 +122,12 @@ def safe_vector_search(query, scope):
     except Exception:
         return []
 
-    docs = [doc for doc, score in results if score >= SIMILARITY_THRESHOLD]
+    # 🔧 FIX: apply threshold ONLY for All Documents
+    if scope == "All Documents":
+        docs = [doc for doc, score in results if score >= SIMILARITY_THRESHOLD]
+    else:
+        docs = [doc for doc, _ in results]  # trust user-selected scope
+
     return dedupe_docs(docs)
 
 # -------------------------------
@@ -210,3 +215,4 @@ if col1.button("Run Query"):
 if col2.button("Reset"):
     st.session_state.clear()
     st.experimental_rerun()
+
