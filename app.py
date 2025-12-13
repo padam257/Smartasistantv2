@@ -124,7 +124,7 @@ def safe_vector_search(query, scope):
 
     # 🔧 FIX: apply threshold ONLY for All Documents
     if scope == "All Documents":
-        docs = [doc for doc, score in results if score >= SIMILARITY_THRESHOLD]
+        docs = [doc for doc, score in results if score <= SIMILARITY_THRESHOLD]
     else:
         docs = [doc for doc, _ in results]  # trust user-selected scope
 
@@ -155,7 +155,7 @@ if file:
     )
 
     docs = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
+        chunk_size=5000,
         chunk_overlap=200
     ).split_documents(loader.load())
 
@@ -215,4 +215,5 @@ if col1.button("Run Query"):
 if col2.button("Reset"):
     st.session_state.clear()
     st.experimental_rerun()
+
 
