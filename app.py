@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import uuid
 
 # -------------------------------
 # REMOVE PROXIES
@@ -15,7 +16,7 @@ from azure.storage.blob import BlobServiceClient
 from azure.search.documents import SearchClient
 
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
-from langchain.vectorstores.azuresearch import AzureSearch
+from langchain_community.vectorstores.azuresearch import AzureSearch
 from langchain_community.document_loaders import (
     PyPDFLoader, TextLoader, UnstructuredFileLoader
 )
@@ -65,25 +66,34 @@ embeddings = AzureOpenAIEmbeddings(
     api_version="2024-02-15-preview"
 )
 
+# -------------------------------
+# VECTOR STORE (CRITICAL FIX)
+# Explicit field mapping → prevents JSONDecodeError
+# -------------------------------
 vectorstore = AzureSearch(
     azure_search_endpoint=AZURE_SEARCH_ENDPOINT,
     azure_search_key=AZURE_SEARCH_ADMIN_KEY,
     index_name=AZURE_SEARCH_INDEX_NAME,
-    embedding_function=embeddings.embed_query
+    embedding_function=embeddings.embed_query,
+    fields={
+        "id": "id",
+        "content": "content",
+        "content_vector": "content_vector",
+        "file_name": "file_name"
+    }
 )
 
 # -------------------------------
-# PROMPT
+# PROMPT (RAG)
 # -------------------------------
 RAG_PROMPT = PromptTemplate(
     input_variables=["context", "question"],
     template="""
-You are an AI assistant that answers strictly from SOP documents.
-
-If the answer is not present in the context, reply exactly:
+Answer the question strictly using the SOP content below.
+If the answer is not present, reply exactly:
 "No information available in SOP documents."
 
-Context:
+SOP Content:
 {context}
 
 Question:
@@ -94,40 +104,21 @@ Answer:
 )
 
 # -------------------------------
-# HELPERS
+# SEARCH HELPER (NO threshold, NO out-of-scope logic)
 # -------------------------------
-def dedupe_docs(docs):
-    seen = set()
-    unique = []
-    for d in docs:
-        key = d.page_content[:200]
-        if key not in seen:
-            seen.add(key)
-            unique.append(d)
-    return unique
-
 def vector_search(query, scope):
-    """
-    PURE VECTOR SEARCH (NO HYBRID)
-    Avoids LangChain JSON metadata bug
-    """
-    if scope == "All Documents":
-        docs = vectorstore.vector_search(query, k=6)
-    else:
-        docs = vectorstore.vector_search(
-            query,
-            k=6,
-            filters=f"file_name eq '{scope}'"
-        )
-    return dedupe_docs(docs)
+    filter_expr = None
+    if scope != "All Documents":
+        filter_expr = f"file_name eq '{scope}'"
 
-# -------------------------------
-# SESSION STATE
-# -------------------------------
-if "answer" not in st.session_state:
-    st.session_state.answer = None
-if "sources" not in st.session_state:
-    st.session_state.sources = []
+    docs = vectorstore.similarity_search(
+        query=query,
+        k=6,
+        filter=filter_expr
+    )
+
+    # 🔧 FIX: remove empty / invalid chunks
+    return [d for d in docs if d.page_content and d.page_content.strip()]
 
 # -------------------------------
 # UI
@@ -158,61 +149,75 @@ if file:
         chunk_overlap=200
     ).split_documents(loader.load())
 
+    # 🔧 FIX: ensure id + correct metadata
     for d in docs:
-        d.metadata = {"file_name": file.name}
+        d.metadata = {
+            "id": str(uuid.uuid4()),
+            "file_name": file.name
+        }
 
     vectorstore.add_documents(docs)
     st.success(f"Indexed {file.name}")
 
 # -------------------------------
-# FILE LIST + DELETE
+# FILE LIST + DELETE (FIXED)
 # -------------------------------
 st.header("📂 SOP Files")
 files = [b.name for b in container.list_blobs()]
-
 delete_file = st.selectbox("Select file to delete", [""] + files)
+
 if st.button("🗑️ Delete Selected File") and delete_file:
     container.delete_blob(delete_file)
-    search_client.delete_documents(documents=[{"file_name": delete_file}])
-    st.success(f"Deleted {delete_file}")
+
+    # 🔧 FIX: delete by KEY FIELD (id)
+    results = search_client.search(
+        search_text="*",
+        filter=f"file_name eq '{delete_file}'",
+        select=["id"]
+    )
+
+    ids = [{"id": r["id"]} for r in results]
+
+    if ids:
+        search_client.delete_documents(documents=ids)
+        st.success(f"Deleted {len(ids)} chunks from {delete_file}")
+    else:
+        st.warning("No indexed chunks found for this file")
+
     st.stop()
 
 # -------------------------------
-# QUERY
+# QUERY + OUTPUT SECTION
 # -------------------------------
 st.header("🔍 Query SOPs")
 
 scope = st.selectbox("Search Scope", ["All Documents"] + files)
 question = st.text_input("Enter your question")
 
-col1, col2 = st.columns(2)
-
-if col1.button("Run Query"):
+if st.button("Run Query") and question:
     with st.spinner("Searching SOPs…"):
         docs = vector_search(question, scope)
 
+    st.subheader("📝 Answer")
+
     if not docs:
-        st.session_state.answer = "No information available in SOP documents."
-        st.session_state.sources = []
+        st.write("No information available in SOP documents.")
     else:
         context = "\n\n".join(d.page_content for d in docs)
-        st.session_state.answer = llm.invoke(
-            RAG_PROMPT.format(context=context, question=question)
-        ).content
-        st.session_state.sources = docs
 
-if col2.button("Reset"):
+        response = llm.invoke(
+            RAG_PROMPT.format(context=context, question=question)
+        )
+
+        st.write(response.content)
+
+        st.subheader("📌 Source Chunks")
+        for d in docs:
+            st.write(d.page_content[:400])
+
+# -------------------------------
+# RESET
+# -------------------------------
+if st.button("Reset"):
     st.session_state.clear()
     st.rerun()
-
-# -------------------------------
-# OUTPUT
-# -------------------------------
-if st.session_state.answer:
-    st.subheader("📝 Answer")
-    st.write(st.session_state.answer)
-
-    if st.session_state.sources:
-        st.subheader("📌 Source Chunks")
-        for d in st.session_state.sources:
-            st.write(d.page_content[:400])
