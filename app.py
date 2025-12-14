@@ -79,7 +79,7 @@ vectorstore = AzureSearch(
     content_field="content",
     vector_field="content_vector",
     id_field="id",
-    }
+    
 )
 
 # -------------------------------
@@ -221,5 +221,6 @@ if st.button("Run Query") and question:
 if st.button("Reset"):
     st.session_state.clear()
     st.rerun()
+
 
 
