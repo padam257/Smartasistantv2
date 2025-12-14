@@ -71,15 +71,14 @@ embeddings = AzureOpenAIEmbeddings(
 # Explicit field mapping → prevents JSONDecodeError
 # -------------------------------
 vectorstore = AzureSearch(
+vectorstore = AzureSearch(
     azure_search_endpoint=AZURE_SEARCH_ENDPOINT,
     azure_search_key=AZURE_SEARCH_ADMIN_KEY,
     index_name=AZURE_SEARCH_INDEX_NAME,
     embedding_function=embeddings.embed_query,
-    fields={
-        "id": "id",
-        "content": "content",
-        "content_vector": "content_vector",
-        "file_name": "file_name"
+    content_field="content",
+    vector_field="content_vector",
+    id_field="id",
     }
 )
 
@@ -150,10 +149,11 @@ if file:
     ).split_documents(loader.load())
 
     # 🔧 FIX: ensure id + correct metadata
-    for d in docs:
-        d.metadata = {
-            "id": str(uuid.uuid4()),
-            "file_name": file.name
+    for i, d in enumerate(docs):
+    d.metadata = {
+        "id": f"{file.name}-{i}",
+        "file_name": file.name,
+        "page": d.metadata.get("page", 0),
         }
 
     vectorstore.add_documents(docs)
@@ -221,4 +221,5 @@ if st.button("Run Query") and question:
 if st.button("Reset"):
     st.session_state.clear()
     st.rerun()
+
 
