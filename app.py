@@ -71,7 +71,6 @@ embeddings = AzureOpenAIEmbeddings(
 # Explicit field mapping → prevents JSONDecodeError
 # -------------------------------
 vectorstore = AzureSearch(
-vectorstore = AzureSearch(
     azure_search_endpoint=AZURE_SEARCH_ENDPOINT,
     azure_search_key=AZURE_SEARCH_ADMIN_KEY,
     index_name=AZURE_SEARCH_INDEX_NAME,
@@ -221,6 +220,7 @@ if st.button("Run Query") and question:
 if st.button("Reset"):
     st.session_state.clear()
     st.rerun()
+
 
 
 
