@@ -107,14 +107,14 @@ Answer:
 # SEARCH HELPER (NO threshold, NO out-of-scope logic)
 # -------------------------------
 def vector_search(query, scope):
-    filter_expr = None
+    filters = None
     if scope != "All Documents":
-        filter_expr = f"file_name eq '{scope}'"
+        filters = f"file_name eq '{scope}'"
 
     docs = vectorstore.similarity_search(
         query=query,
         k=6,
-        filter=filter_expr
+        filters=filters
     )
 
     # 🔧 FIX: remove empty / invalid chunks
@@ -221,3 +221,4 @@ if st.button("Run Query") and question:
 if st.button("Reset"):
     st.session_state.clear()
     st.rerun()
+
