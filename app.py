@@ -149,10 +149,10 @@ if file:
 
     # 🔧 FIX: ensure id + correct metadata
     for i, d in enumerate(docs):
-    d.metadata = {
-        "id": f"{file.name}-{i}",
-        "file_name": file.name,
-        "page": d.metadata.get("page", 0),
+            d.metadata = {
+            "id": f"{file.name}-{i}",
+            "file_name": file.name,
+            "page": d.metadata.get("page", 0),
         }
 
     vectorstore.add_documents(docs)
@@ -220,6 +220,7 @@ if st.button("Run Query") and question:
 if st.button("Reset"):
     st.session_state.clear()
     st.rerun()
+
 
 
 
